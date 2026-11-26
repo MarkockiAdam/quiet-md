@@ -12,6 +12,7 @@ pub mod model;
 
 use crate::design::{self, Button, ButtonSize, Checkbox, Field, Label, MenuItem, Popover, Segment, Segmented, color};
 use crate::input::{TextField, TextFieldEvent};
+use crate::ui::TipExt;
 use gpui::{prelude::FluentBuilder, *};
 use model::{Class, Day, Item, Kind, Link, Minute};
 use std::collections::HashMap;
@@ -64,6 +65,9 @@ pub struct SchedulePage {
     pub links: HashMap<String, Vec<(String, String)>>,
     /// Every note, most recently opened first: (id, title), for 关联笔记. The workspace fills it.
     pub notes: Vec<(String, String)>,
+    /// The library's folders, by name, each with its colour: the courses the forms suggest. The
+    /// workspace fills it.
+    pub folders: Vec<(String, Option<String>)>,
     /// The details card open on this lecture or item.
     detail: Option<Link>,
     /// The card's 关联已有笔记 list is open.
@@ -73,6 +77,17 @@ pub struct SchedulePage {
     find: Entity<TextField>,
     /// Google, iCloud …: the calendars of this Mac (`external`).
     ext: external::Ext,
+    /// When the sheet now open (a form, the event form, a details card) opened, for its close-in.
+    sheet_since: Option<web_time::Instant>,
+    /// When 关联到课表 opened, for its close-in.
+    pick_since: Option<web_time::Instant>,
+    /// What the open sheet shows, kept each frame so it can be drawn once more on its way out; and
+    /// the sheet leaving, since when.
+    shown: Option<Shown>,
+    leaving: Option<(web_time::Instant, Shown)>,
+    /// The same for 关联到课表: the note it was for.
+    last_pick: Option<String>,
+    pick_leaving: Option<(web_time::Instant, String)>,
     /// The grid was brought to the time now (on opening, and on 今天).
     placed: bool,
     name: Entity<TextField>,
@@ -84,6 +99,9 @@ pub struct SchedulePage {
     date: Entity<TextField>,
     time: Entity<TextField>,
     until: Entity<TextField>,
+    /// The event form's title, written large in place, and its location.
+    x_title: Entity<TextField>,
+    x_place: Entity<TextField>,
     _subs: Vec<Subscription>,
 }
 
@@ -96,6 +114,10 @@ fn wash(c: &str) -> Hsla { ink(c).opacity(if crate::theme::dark() { 0.26 } else 
 /// The red of now and of today (the design's destructive, close to the system red).
 fn now_red() -> Hsla { color::destructive() }
 
+/// What a sheet shows: enough to draw it again after it was closed, while it leaves.
+#[derive(Clone)]
+struct Shown { form: Option<Form>, ext_form: Option<external::ExtForm>, detail: Option<Link>, choosing: bool, error: Option<&'static str>, ext_error: Option<String>, deleting: bool }
+
 /// One thing drawn in the grid.
 struct Block { link: Link, start: Minute, end: Minute, title: String, sub: String, accent: Hsla, fill: Hsla, done: bool }
 
@@ -105,9 +127,12 @@ impl SchedulePage {
         let (name, kind, place, start, end) = (field(cx, "Calculus"), field(cx, "Lecture"), field(cx, "Room B12"), field(cx, "9:00"), field(cx, "10:30"));
         let (course, date, time, until) = (field(cx, "Calculus"), field(cx, "fri, 3.12, 2026-12-03"), field(cx, "optional"), field(cx, "optional"));
         let find = field(cx, "Search notes");
+        let (x_title, x_place) = (field(cx, "Title"), field(cx, "Add location"));
+        // The forms' names are written large, in place.
+        for f in [&x_title, &name] { f.update(cx, |f, _| { f.size = 20.; f.line_height = 26.; }); }
         let mut subs = vec![];
         subs.push(cx.subscribe(&find, |_: &mut Self, _, _: &TextFieldEvent, cx| cx.notify()));
-        for f in [&name, &kind, &place, &start, &end, &course, &date, &time, &until] {
+        for f in [&name, &kind, &place, &start, &end, &course, &date, &time, &until, &x_title, &x_place] {
             subs.push(cx.subscribe(f, |p: &mut Self, _, ev: &TextFieldEvent, cx| match ev {
                 TextFieldEvent::Submit if p.ext.form.is_some() => p.save_ext_form(cx),
                 TextFieldEvent::Submit if p.form.is_none() => {}
@@ -125,8 +150,8 @@ impl SchedulePage {
         log::info!("calendars: access at start {:?}", calendars::access());
         SchedulePage {
             data: model::load(), anchor: now().0, days: 7, mini: None, add_menu: false, form: None, error: None,
-            scroll: ScrollHandle::new(), placed: false, links: HashMap::new(), notes: vec![], detail: None, choosing: false, picking: None, find, ext: Default::default(),
-            name, kind, place, start, end, course, date, time, until, _subs: subs,
+            scroll: ScrollHandle::new(), placed: false, links: HashMap::new(), notes: vec![], folders: vec![], detail: None, choosing: false, picking: None, find, ext: Default::default(), sheet_since: None, pick_since: None, shown: None, leaving: None, last_pick: None, pick_leaving: None,
+            name, kind, place, start, end, course, date, time, until, x_title, x_place, _subs: subs,
         }
     }
 
@@ -147,6 +172,7 @@ impl SchedulePage {
 
     fn set(&self, f: &Entity<TextField>, s: &str, cx: &mut Context<Self>) { f.update(cx, |f, cx| f.set_text(s, cx)); }
     fn text(&self, f: &Entity<TextField>, cx: &App) -> String { f.read(cx).text.trim().to_string() }
+    fn hint(&self, f: &Entity<TextField>, s: &'static str, cx: &mut Context<Self>) { f.update(cx, |f, cx| f.set_placeholder(s, cx)); }
 
     fn first_day(&self) -> Day { if self.days == 7 { self.anchor - model::weekday_of(self.anchor) as i64 } else { self.anchor } }
     /// Show `day` (a note's chip): its week, brought to `start` when it has one.
@@ -175,6 +201,7 @@ impl SchedulePage {
             let start = hour.unwrap_or(9) * 60;
             Class { day, start, end: (start + 90).min(24 * 60 - 1), color: crate::theme::FOLDER_COLORS[(self.data.courses().len() + 5) % 7].into(), ..Default::default() }
         });
+        self.hint(&self.name, "Course name", cx); self.hint(&self.place, "Add room", cx); self.hint(&self.kind, "Lecture, lab, seminar…", cx);
         self.set(&self.name, &c.course, cx); self.set(&self.kind, &c.kind, cx); self.set(&self.place, &c.place, cx);
         self.set(&self.start, &model::hm(c.start), cx); self.set(&self.end, &model::hm(c.end), cx);
         self.form = Some(Form::Class { id, day: c.day, color: c.color });
@@ -186,8 +213,10 @@ impl SchedulePage {
 
     fn open_item(&mut self, id: Option<String>, kind: Kind, window: &mut Window, cx: &mut Context<Self>) {
         let i = id.as_ref().and_then(|id| self.data.items.iter().find(|i| &i.id == id)).cloned().unwrap_or(Item { kind, ..Default::default() });
+        self.hint(&self.name, "Title", cx); self.hint(&self.course, "New course", cx);
+        self.hint(&self.date, "Date", cx); self.hint(&self.time, "Time", cx); self.hint(&self.until, "End", cx);
         self.set(&self.name, &i.title, cx); self.set(&self.course, &i.course, cx);
-        self.set(&self.date, &if id.is_some() { let (y, m, d) = model::ymd(i.day); format!("{y}-{m:02}-{d:02}") } else { String::new() }, cx);
+        self.set(&self.date, &if id.is_some() { model::day_input(i.day, now().0) } else { String::new() }, cx);
         self.set(&self.time, &i.time.map(model::hm).unwrap_or_default(), cx);
         self.set(&self.until, &i.end.map(model::hm).unwrap_or_default(), cx);
         self.form = Some(Form::Item { id, kind: i.kind, done: i.done });
@@ -565,66 +594,112 @@ impl SchedulePage {
                 .child(div().flex_1().min_w_0().overflow_hidden().child(f.clone())))
     }
 
+    /// The class and item forms, laid out as the event form is: the name written large in place, then a
+    /// row each for when, where and what it belongs to, each with its glyph; Delete is quiet red text.
     fn form(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let form = self.form.clone()?;
         let editing = matches!(&form, Form::Class { id: Some(_), .. } | Form::Item { id: Some(_), .. });
-        let body = match &form {
-            Form::Class { day, color: picked, .. } => div().flex().flex_col().gap(px(14.))
-                .child(div().flex().gap(px(10.)).child(self.field("f-course", "Course", &self.name, window, cx)).child(self.field("f-kind", "Type", &self.kind, window, cx)))
-                .child(div().flex().flex_col().gap(px(6.)).child(Label::new("Every"))
-                    .child(Segmented::new().children((0..7u8).map(|k| Segment::new(("f-day", k as usize), model::WEEKDAYS[k as usize]).selected(k == *day)
-                        .on_click(cx.listener(move |p, _, _, cx| { if let Some(Form::Class { day, .. }) = p.form.as_mut() { *day = k; } cx.notify(); }))))))
-                .child(div().flex().gap(px(10.)).child(self.field("f-start", "Starts", &self.start, window, cx)).child(self.field("f-end", "Ends", &self.end, window, cx)))
-                .child(self.field("f-place", "Room", &self.place, window, cx))
-                .child(div().flex().flex_col().gap(px(6.)).child(Label::new("Colour"))
-                    .child(div().flex().gap(px(4.)).children(crate::theme::FOLDER_COLORS.iter().enumerate().map(|(k, name)| {
-                        let on = picked == name;
-                        div().id(("f-color", k)).size(px(28.)).rounded_full().cursor_pointer().flex().items_center().justify_center()
-                            .border(px(if on { 2. } else { 0. })).border_color(ink(name)).hover(|s| s.bg(color::accent()))
-                            .child(div().size(px(18.)).rounded_full().bg(ink(name)))
-                            .on_click(cx.listener(move |p, _, _, cx| { if let Some(Form::Class { color, .. }) = p.form.as_mut() { *color = (*name).into(); } cx.notify(); }))
-                    })))),
+        let (accent, rows, add_label) = match &form {
+            Form::Class { day, color: picked, .. } => {
+                let days = sheet_row("calendar").child(div().text_size(px(12.5)).text_color(color::muted_foreground()).child("Every"))
+                    .child(div().flex().gap(px(4.)).children((0..7u8).map(|k| {
+                        let on = k == *day;
+                        div().id(("f-day", k as usize)).size(px(30.)).rounded_full().flex().items_center().justify_center().cursor_pointer()
+                            .text_size(px(12.)).font_weight(if on { FontWeight::BOLD } else { FontWeight::MEDIUM })
+                            .when(on, |d| d.bg(ink(picked)).text_color(gpui::white()))
+                            .when(!on, |d| d.text_color(color::muted_foreground()).hover(|s| s.bg(color::muted())))
+                            .child(model::WEEKDAYS[k as usize][..1].to_string())
+                            .on_click(cx.listener(move |p, _, _, cx| { if let Some(Form::Class { day, .. }) = p.form.as_mut() { *day = k; } cx.notify(); }))
+                    })));
+                let when = sheet_row("clock").child(chip("f-start", &self.start, 74., window, cx))
+                    .child(div().text_size(px(13.)).text_color(color::muted_foreground()).child("→"))
+                    .child(chip("f-end", &self.end, 74., window, cx));
+                let colours = sheet_row("palette").child(div().flex().gap(px(6.)).children(crate::theme::FOLDER_COLORS.iter().enumerate().map(|(k, name)| {
+                    let on = picked == name;
+                    div().id(("f-color", k)).size(px(22.)).rounded_full().cursor_pointer().flex().items_center().justify_center()
+                        .border(px(if on { 2. } else { 0. })).border_color(ink(name))
+                        .child(div().size(px(if on { 12. } else { 16. })).rounded_full().bg(ink(name)))
+                        .on_click(cx.listener(move |p, _, _, cx| { if let Some(Form::Class { color, .. }) = p.form.as_mut() { *color = (*name).into(); } cx.notify(); }))
+                })));
+                let name_now = self.name.read(cx).text.trim().to_string();
+                let folders = sheet_row("folder").child(div().min_w_0().flex_1().flex().flex_wrap().items_center().gap(px(6.)).py(px(4.))
+                    .children(self.folder_chips(&name_now, self.name.clone(), |p, c| { if let Some(Form::Class { color, .. }) = p.form.as_mut() { *color = c.to_string(); } }, cx)));
+                let rows = div().flex().flex_col().gap(px(2.)).child(folders).child(days).child(when)
+                    .child(sheet_row("map-pin").child(bare("f-place", &self.place, window, cx)))
+                    .child(sheet_row("list").child(bare("f-kind", &self.kind, window, cx)))
+                    .child(colours);
+                (ink(picked), rows, if editing { "Done" } else { "Add class" })
+            }
             Form::Item { kind, done, .. } => {
-                let courses = self.data.courses();
                 let timed = *kind != Kind::Assignment;
-                div().flex().flex_col().gap(px(14.))
-                    .child(Segmented::new().children(Kind::ALL.iter().enumerate().map(|(k, x)| { let x = *x; Segment::new(("f-ikind", k), x.label()).selected(x == *kind)
-                        .on_click(cx.listener(move |p, _, _, cx| { if let Some(Form::Item { kind, .. }) = p.form.as_mut() { *kind = x; } cx.notify(); })) })))
-                    .child(self.field("f-title", "Title", &self.name, window, cx))
-                    .child(div().flex().flex_col().gap(px(6.)).child(self.field("f-icourse", "Course", &self.course, window, cx))
-                        .when(!courses.is_empty(), |d| d.child(div().flex().flex_wrap().gap(px(4.)).children(courses.into_iter().enumerate().map(|(k, (name, c))| {
-                            let n = name.clone();
-                            div().id(("f-pick", k)).px(px(9.)).py(px(3.)).rounded_full().bg(wash(&c)).cursor_pointer().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(ink(&c)).child(name)
-                                .on_click(cx.listener(move |p, _, _, cx| { let f = p.course.clone(); f.update(cx, |f, cx| f.set_text(&n, cx)); cx.notify(); }))
-                        })))))
-                    .child(div().flex().gap(px(10.))
-                        .child(self.field("f-date", if timed { "Date" } else { "Due" }, &self.date, window, cx))
-                        .child(self.field("f-time", if timed { "Starts" } else { "Time" }, &self.time, window, cx))
-                        .when(timed, |d| d.child(self.field("f-until", "Ends", &self.until, window, cx))))
-                    .when(editing, |d| d.child(div().id("f-done").flex().items_center().gap(px(8.)).cursor_pointer().child(Checkbox::new(*done)).child(Label::new("Done"))
-                        .on_click(cx.listener(|p, _, _, cx| { if let Some(Form::Item { done, .. }) = p.form.as_mut() { *done = !*done; } cx.notify(); }))))
+                let picked = self.course.read(cx).text.trim().to_string();
+                let accent = self.course_choices().into_iter().find(|(n, _)| n.eq_ignore_ascii_case(&picked)).map(|(_, c)| ink(&c))
+                    .or_else(|| self.data.color_of(&picked).map(ink)).unwrap_or_else(|| if *kind == Kind::Exam { ink("red") } else { color::muted_foreground() });
+                let kinds = div().pl(px(30.)).pb(px(4.)).child(Segmented::new().w(px(300.)).children(Kind::ALL.iter().enumerate().map(|(k, x)| { let x = *x; Segment::new(("f-ikind", k), x.label()).selected(x == *kind)
+                    .on_click(cx.listener(move |p, _, _, cx| { if let Some(Form::Item { kind, .. }) = p.form.as_mut() { *kind = x; } cx.notify(); })) })));
+                let when = sheet_row("clock")
+                    .when(!timed, |d| d.child(div().text_size(px(12.5)).text_color(color::muted_foreground()).child("Due")))
+                    .child(chip("f-date", &self.date, 132., window, cx)).child(chip("f-time", &self.time, 74., window, cx))
+                    .when(timed, |d| d.child(div().text_size(px(13.)).text_color(color::muted_foreground()).child("→")).child(chip("f-until", &self.until, 74., window, cx)));
+                // The course: its chips to pick from, or a new name typed in.
+                let course = sheet_row("folder").child(div().min_w_0().flex_1().flex().flex_wrap().items_center().gap(px(6.))
+                    .children(self.folder_chips(&picked, self.course.clone(), |_, _| {}, cx))
+                    .child(div().w(px(120.)).child(bare("f-icourse", &self.course, window, cx))));
+                let rows = div().flex().flex_col().gap(px(2.)).child(kinds).child(when).child(course)
+                    .when(editing, |d| d.child(sheet_row("check").child(div().id("f-done").flex().items_center().gap(px(8.)).cursor_pointer().child(Checkbox::new(*done))
+                        .child(div().text_size(px(13.)).text_color(color::foreground()).child("Done"))
+                        .on_click(cx.listener(|p, _, _, cx| { if let Some(Form::Item { done, .. }) = p.form.as_mut() { *done = !*done; } cx.notify(); })))));
+                (accent, rows, if editing { "Done" } else { match kind { Kind::Assignment => "Add assignment", Kind::Exam => "Add exam", Kind::Event => "Add event" } })
             }
         };
-        let title = match (&form, editing) {
-            (Form::Class { .. }, false) => "New class".to_string(),
-            (Form::Class { .. }, true) => "Edit class".to_string(),
-            (Form::Item { kind, .. }, false) => format!("New {}", kind.label().to_lowercase()),
-            (Form::Item { kind, .. }, true) => format!("Edit {}", kind.label().to_lowercase()),
-        };
+        let title = div().flex().items_center().gap(px(10.))
+            .child(div().w(px(4.)).h(px(30.)).flex_none().rounded_full().bg(accent))
+            .child(bare("f-name", &self.name, window, cx))
+            .child(Button::ghost("f-close").icon("x").on_click(cx.listener(|p, _, _, cx| p.close_form(cx))));
         let footer = div().w_full().flex().items_center().gap(px(8.))
-            .when(editing, |d| d.child(Button::ghost("f-delete").sized(ButtonSize::Default).icon("bin").label("Delete").on_click(cx.listener(|p, _, _, cx| p.delete_form(cx)))))
+            .when(editing, |d| d.child(div().id("f-delete").px(px(2.)).text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(color::destructive()).cursor_pointer()
+                .hover(|s| s.opacity(0.75)).child("Delete").on_click(cx.listener(|p, _, _, cx| p.delete_form(cx)))))
             .child(div().flex_1())
-            .child(Button::outline("f-cancel").label("Cancel").on_click(cx.listener(|p, _, _, cx| p.close_form(cx))))
-            .child(Button::primary("f-save").label("Save").on_click(cx.listener(|p, _, _, cx| p.save_form(cx))));
+            .child(Button::ghost("f-cancel").sized(ButtonSize::Sm).label("Cancel").on_click(cx.listener(|p, _, _, cx| p.close_form(cx))))
+            .child(Button::primary("f-save").sized(ButtonSize::Sm).label(add_label).on_click(cx.listener(|p, _, _, cx| p.save_form(cx))));
         Some(design::scrim().id("sch-scrim").occlude()
             .on_key_down(cx.listener(|p, ev: &KeyDownEvent, _, cx| if ev.keystroke.key == "escape" { p.close_form(cx); cx.stop_propagation(); }))
-            .child(design::Dialog::new("sch-form").w(px(480.)).title(title)
-                .closable(cx.listener(|p, _, _, cx| p.close_form(cx)))
-                .child(body)
-                .when_some(self.error, |d, e| d.child(div().text_size(px(12.5)).text_color(now_red()).child(e)))
-                .footer(footer))
+            .child(sheet("sch-form").child(title).child(div().h(px(4.))).child(rows)
+                .when_some(self.error, |d, e| d.child(div().pl(px(30.)).text_size(px(12.5)).text_color(now_red()).child(e)))
+                .child(div().h(px(6.))).child(div().h(px(1.)).bg(color::border()).mx(px(-24.))).child(div().h(px(8.)))
+                .child(footer))
             .into_any_element())
     }
+}
+
+/// A form's card: rounded, raised, padded like a calendar's own sheet.
+fn sheet(id: &'static str) -> Stateful<Div> {
+    div().id(id).occlude().w(px(460.)).rounded(px(16.)).bg(color::popover()).shadow(design::shadow::frame()).px(px(24.)).pt(px(16.)).pb(px(16.)).flex().flex_col().gap(px(6.))
+}
+
+/// A row of a sheet: its glyph in a fixed column, then what it holds.
+fn sheet_row(glyph: &'static str) -> Div {
+    div().min_h(px(40.)).flex().items_center().gap(px(12.))
+        .child(div().w(px(18.)).flex_none().flex().justify_center().child(crate::ui::icon(glyph, 16., color::muted_foreground())))
+}
+
+/// A borderless input filling its row: the text is the control; a soft wash under the pointer and the caret.
+fn bare(id: &'static str, e: &Entity<TextField>, window: &Window, cx: &App) -> Stateful<Div> {
+    let h = e.read(cx).focus_handle(cx);
+    div().id(id).flex_1().min_w_0().min_h(px(32.)).px(px(8.)).mx(px(-8.)).rounded(px(7.)).flex().items_center().cursor_text()
+        .when(e.read(cx).is_focused(window), |d| d.bg(color::muted())).hover(|s| s.bg(color::muted_half()))
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| window.focus(&h, cx))
+        .child(div().flex_1().min_w_0().overflow_hidden().child(e.clone()))
+}
+
+/// A small field for a date or a time: a soft pill, edged while it has the caret.
+fn chip(id: &'static str, e: &Entity<TextField>, w: f32, window: &Window, cx: &App) -> Stateful<Div> {
+    let h = e.read(cx).focus_handle(cx);
+    let on = e.read(cx).is_focused(window);
+    div().id(id).w(px(w)).flex_none().h(px(30.)).px(px(9.)).rounded(px(7.)).flex().items_center().cursor_text()
+        .bg(if on { color::background() } else { color::accent() }).border_1().border_color(if on { color::ring() } else { gpui::transparent_black() })
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| window.focus(&h, cx))
+        .child(div().flex_1().min_w_0().overflow_hidden().child(e.clone()))
 }
 
 /// The parts that are there, joined with " · ".
@@ -654,90 +729,134 @@ impl SchedulePage {
         self.notes.iter().filter(|(id, t)| !skip.iter().any(|(s, _)| s == id) && (q.is_empty() || t.to_lowercase().contains(&q))).take(limit).cloned().collect()
     }
 
-    /// The details card of a lecture, an item or a calendar event: when and where, its notes, and what
-    /// to do with them.
-    fn details(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The details card of a lecture, an item or a calendar event, laid out like a calendar's own: the
+    /// title, a row each for when, where and what it belongs to, then its notes with two quiet ways to
+    /// add one. Edit and close sit in the corner.
+    fn details(&self, _window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let link = self.detail.clone()?;
         let (today, minute, _) = now();
+        let now_unix = crate::time::now() as i64;
         let notes = self.links.get(&link.key()).cloned().unwrap_or_default();
-        // (title, colour, the line under it, the folder a new note goes in, the new note's title, the event to edit)
-        let (title, accent, line, course, note_title, event) = match &link {
+        // What it is: title, colour, when, whether it is on now, how far off, where, what it belongs to,
+        // the folder a new note goes in, the new note's title, and whether it can be edited.
+        struct Facts { title: String, accent: Hsla, when: String, on: bool, rel: String, place: String, belongs: String, course: String, note_title: String, editable: bool }
+        let f = match &link {
             Link::Class { id, day } => {
                 let c = self.data.classes.iter().find(|c| &c.id == id)?;
                 let on = *day == today && c.start <= minute && minute < c.end;
-                let rel = if on { "on now".to_string() } else { model::until((today, minute), (*day, c.start)) };
-                let when = format!("{} · {} – {}", model::day_label(*day), model::clock(c.start), model::clock(c.end));
-                (c.course.clone(), ink(&c.color), join(&[&c.kind, &when, &c.place, &rel]), c.course.clone(), format!("{} – {}", c.course, model::day_label(*day)), None)
+                Facts { title: c.course.clone(), accent: ink(&c.color), when: format!("{} · {} – {}", model::day_label(*day), model::clock(c.start), model::clock(c.end)), on,
+                    rel: model::until((today, minute), (*day, c.start)), place: c.place.clone(), belongs: join(&[&c.kind, &"every week".to_string()]),
+                    course: c.course.clone(), note_title: format!("{} – {}", c.course, model::day_label(*day)), editable: true }
             }
             Link::Item { id } => {
                 let i = self.data.items.iter().find(|i| &i.id == id)?;
                 let t = match (i.time, i.end) { (Some(s), Some(e)) => format!(" · {} – {}", model::clock(s), model::clock(e)), (Some(s), None) => format!(" · {}", model::clock(s)), _ => String::new() };
                 let c = self.data.color_of(&i.course).unwrap_or(if i.kind == Kind::Exam { "red" } else { "gray" });
-                let rel = model::until((today, minute), (i.day, i.time.unwrap_or(0)));
-                (i.title.clone(), ink(c), join(&[&i.kind.label().to_string(), &format!("{}{t}", model::day_label(i.day)), &rel]), i.course.clone(), i.title.clone(), None)
+                Facts { title: i.title.clone(), accent: ink(c), when: format!("{}{t}", model::day_label(i.day)), on: false, rel: model::until((today, minute), (i.day, i.time.unwrap_or(0))),
+                    place: String::new(), belongs: join(&[&i.kind.label().to_string(), &i.course]), course: i.course.clone(), note_title: i.title.clone(), editable: true }
             }
             Link::Event { id, start } => {
                 let e = self.ext_event(id, *start)?;
-                let (accent, d0) = (self.ext_describe(id, *start).map(|(_, a)| a).unwrap_or_else(color::muted_foreground), model::local(e.start as u64).0);
-                let rel = if e.start <= crate::time::now() as i64 && (crate::time::now() as i64) < e.end { "on now".to_string() } else { model::until((today, minute), (d0, model::local(e.start as u64).1)) };
-                (e.title.clone(), accent, join(&[&self.ext_calendar_title(&e), &Self::ext_when(&e), &e.location, &rel]), String::new(), format!("{} – {}", e.title, model::day_label(d0)), Some(e))
+                let accent = self.ext_describe(id, *start).map(|(_, a)| a).unwrap_or_else(color::muted_foreground);
+                let (d0, m0, _) = model::local(e.start as u64);
+                Facts { title: if e.title.is_empty() { "New event".into() } else { e.title.clone() }, accent, when: Self::ext_when(&e), on: e.start <= now_unix && now_unix < e.end,
+                    rel: model::until((today, minute), (d0, m0)), place: e.location.clone(), belongs: self.ext_calendar_title(&e), course: String::new(),
+                    note_title: format!("{} – {}", e.title, model::day_label(d0)), editable: self.ext_writable(&e) }
             }
         };
-        let d = model::Described { title, sub: line, color: String::new(), day: 0, start: None };
-        let title = note_title;
-        let editable = event.as_ref().is_none_or(|e| self.ext_writable(e));
-        let (new_link, new_title, new_course) = (link.clone(), title.clone(), course.clone());
+        let row = |glyph: &'static str| div().min_h(px(30.)).flex().items_start().gap(px(12.))
+            .child(div().w(px(18.)).h(px(20.)).flex_none().flex().items_center().justify_center().child(crate::ui::icon(glyph, 15., color::muted_foreground())));
+        let text = |s: String| div().min_w_0().flex_1().text_size(px(13.)).line_height(px(20.)).text_color(color::foreground()).child(s);
+        let pill = div().flex_none().h(px(20.)).px(px(8.)).rounded_full().flex().items_center().text_size(px(11.)).font_weight(FontWeight::MEDIUM)
+            .when(f.on, |d| d.bg(now_red().opacity(0.16)).text_color(now_red()).child("Now"))
+            .when(!f.on, |d| d.bg(color::accent()).text_color(color::muted_foreground()).child(f.rel.clone()));
         let edit = link.clone();
-        let mut body = div().flex().flex_col().gap(px(4.))
-            .child(div().flex().items_center().gap(px(10.))
-                .child(div().w(px(4.)).h(px(40.)).rounded_full().bg(accent))
-                .child(div().min_w_0().flex().flex_col()
-                    .child(div().text_size(px(19.)).line_height(px(24.)).font_weight(FontWeight::BOLD).text_color(color::foreground()).child(d.title.clone()))
-                    .child(div().text_size(px(12.5)).text_color(color::muted_foreground()).child(d.sub.clone()))))
-            .child(div().mt(px(14.)).mb(px(4.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(color::muted_foreground()).child("Notes"));
-        if notes.is_empty() && !self.choosing {
-            body = body.child(div().text_size(px(12.5)).text_color(color::muted_foreground()).child("No notes yet. Make one for this, or link one you already have."));
-        }
-        body = body.children(notes.iter().enumerate().map(|(k, (id, t))| self.note_row(k, id.clone(), t.clone(), cx)));
-        if self.choosing {
-            let unlink_target = link.clone();
-            body = body.child(div().mt(px(6.)).flex().flex_col().gap(px(6.))
-                .child(self.field("det-find", "Link a note", &self.find, window, cx))
-                .child(div().id("det-choices").max_h(px(220.)).overflow_y_scroll().flex().flex_col()
-                    .children(self.matching_notes(&notes, 40, cx).into_iter().enumerate().map(|(k, (id, t))| {
-                        let (note, l) = (id.clone(), unlink_target.clone());
-                        div().id(("det-choice", k)).h(px(32.)).px(px(10.)).rounded(px(8.)).flex().items_center().gap(px(10.)).cursor_pointer().hover(|s| s.bg(color::accent()))
-                            .child(crate::ui::icon("plus", 14., color::muted_foreground()))
-                            .child(div().min_w_0().flex_1().text_size(px(13.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(crate::settings::display_title(&t)))
-                            .on_click(cx.listener(move |p, _, _, cx| { p.choosing = false; cx.emit(ScheduleEvent::Link { note: note.clone(), link: Some(l.clone()) }); cx.notify(); }))
-                    }))));
-        }
-        let footer = div().w_full().flex().items_center().gap(px(8.))
-            .when(editable, |d| d.child(Button::ghost("det-edit").sized(ButtonSize::Default).icon("square-pen").label("Edit")
+        let header = div().flex().items_start().gap(px(10.))
+            .child(div().mt(px(4.)).w(px(4.)).h(px(22.)).flex_none().rounded_full().bg(f.accent))
+            .child(div().min_w_0().flex_1().text_size(px(20.)).line_height(px(28.)).font_weight(FontWeight::BOLD).text_color(color::foreground()).child(f.title.clone()))
+            .when(f.editable, |d| d.child(Button::ghost("det-edit").icon("pen-line").tip("Edit", None)
                 .on_click(cx.listener(move |p, _, window, cx| { p.detail = None; match &edit {
                     Link::Class { id, day } => p.open_class(Some(id.clone()), model::weekday_of(*day), None, window, cx),
                     Link::Item { id } => p.open_item(Some(id.clone()), Kind::Event, window, cx),
                     Link::Event { id, start } => { let e = p.ext_event(id, *start); let day = now().0; p.open_ext_form(e, day, None, window, cx) }
                 } }))))
-            .when(!editable, |d| d.child(div().text_size(px(12.)).text_color(color::muted_foreground()).child("Read-only calendar")))
-            .child(div().flex_1())
-            .when(!self.choosing, |d| d.child(Button::outline("det-link").label("Link a note").on_click(cx.listener(|p, _, window, cx| {
-                p.choosing = true; let f = p.find.clone(); f.update(cx, |f, cx| f.set_text("", cx)); window.focus(&f.read(cx).focus_handle(cx), cx); cx.notify();
-            }))))
-            .child(Button::primary("det-new").icon("plus").label("New note").on_click(cx.listener(move |p, _, _, cx| {
-                p.detail = None; cx.emit(ScheduleEvent::NewNote { link: new_link.clone(), title: new_title.clone(), course: new_course.clone() }); cx.notify();
-            })));
+            .child(Button::ghost("det-close").icon("x").on_click(cx.listener(|p, _, _, cx| { p.detail = None; cx.notify(); })));
+        let facts = div().flex().flex_col().gap(px(2.))
+            .child(row("clock").child(text(f.when.clone())).child(pill))
+            .when(!f.place.is_empty(), |d| d.child(row("map-pin").child(text(f.place.clone()))))
+            .when(!f.belongs.is_empty(), |d| d.child(row("calendar").child(div().min_w_0().flex_1().flex().items_center().gap(px(8.)).h(px(20.))
+                .child(div().size(px(8.)).flex_none().rounded_full().bg(f.accent))
+                .child(div().min_w_0().text_size(px(13.)).text_color(color::muted_foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis().child(f.belongs.clone())))))
+            .when(!f.editable, |d| d.child(div().pl(px(30.)).text_size(px(11.5)).text_color(color::muted_foreground()).child("Read-only calendar")));
+        let mut notes_box = div().flex().flex_col().gap(px(2.))
+            .child(div().mb(px(4.)).flex().items_center().gap(px(6.))
+                .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(color::muted_foreground()).child("Notes"))
+                .when(!notes.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(color::muted_foreground()).child(notes.len().to_string()))))
+            .children(notes.iter().enumerate().map(|(k, (id, t))| self.note_row(k, id.clone(), t.clone(), cx)));
+        if self.choosing {
+            let target = link.clone();
+            let h = self.find.read(cx).focus_handle(cx);
+            let matches = self.matching_notes(&notes, 5, cx);
+            notes_box = notes_box.child(div().mt(px(4.)).p(px(6.)).rounded(px(10.)).bg(color::muted()).flex().flex_col().gap(px(2.))
+                .child(div().id("det-find").h(px(32.)).px(px(8.)).rounded(px(7.)).bg(color::background()).flex().items_center().gap(px(8.)).cursor_text()
+                    .on_mouse_down(MouseButton::Left, move |_, window, cx| window.focus(&h, cx))
+                    .child(crate::ui::icon("search", 14., color::muted_foreground()))
+                    .child(div().flex_1().min_w_0().overflow_hidden().child(self.find.clone()))
+                    .child(div().id("det-find-cancel").text_size(px(12.)).text_color(color::muted_foreground()).cursor_pointer().hover(|s| s.text_color(color::foreground())).child("Cancel")
+                        .on_click(cx.listener(|p, _, _, cx| { p.choosing = false; cx.notify(); }))))
+                .when(matches.is_empty(), |d| d.child(div().px(px(8.)).py(px(6.)).text_size(px(12.5)).text_color(color::muted_foreground()).child("No notes match.")))
+                .children(matches.into_iter().enumerate().map(|(k, (id, t))| {
+                    let (note, l) = (id.clone(), target.clone());
+                    div().id(("det-choice", k)).h(px(32.)).px(px(8.)).rounded(px(7.)).flex().items_center().gap(px(10.)).cursor_pointer().hover(|s| s.bg(color::accent()))
+                        .child(crate::ui::icon("doc", 14., color::muted_foreground()))
+                        .child(div().min_w_0().flex_1().text_size(px(13.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(crate::settings::display_title(&t)))
+                        .on_click(cx.listener(move |p, _, _, cx| { p.choosing = false; cx.emit(ScheduleEvent::Link { note: note.clone(), link: Some(l.clone()) }); cx.notify(); }))
+                })));
+        } else {
+            let (new_link, new_title, new_course) = (link.clone(), f.note_title.clone(), f.course.clone());
+            notes_box = notes_box.child(div().mt(px(4.)).flex().items_center().gap(px(4.)).ml(px(-8.))
+                .child(Button::ghost("det-new").sized(ButtonSize::Sm).icon("plus").label("New note").on_click(cx.listener(move |p, _, _, cx| {
+                    p.detail = None; cx.emit(ScheduleEvent::NewNote { link: new_link.clone(), title: new_title.clone(), course: new_course.clone() }); cx.notify();
+                })))
+                .child(Button::ghost("det-link").sized(ButtonSize::Sm).icon("ft-link").label("Link a note…").on_click(cx.listener(|p, _, window, cx| {
+                    p.choosing = true; let f = p.find.clone(); f.update(cx, |f, cx| f.set_text("", cx)); window.focus(&f.read(cx).focus_handle(cx), cx); cx.notify();
+                }))));
+        }
         Some(design::scrim().id("det-scrim").occlude()
             .on_mouse_down(MouseButton::Left, cx.listener(|p, _, _, cx| { p.detail = None; cx.notify(); }))
-            .on_key_down(cx.listener(|p, ev: &KeyDownEvent, _, cx| if ev.keystroke.key == "escape" { p.detail = None; cx.stop_propagation(); cx.notify(); }))
-            .child(design::Dialog::new("det").w(px(440.)).occlude().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .closable(cx.listener(|p, _, _, cx| { p.detail = None; cx.notify(); }))
-                .child(body).footer(footer))
+            .on_key_down(cx.listener(|p, ev: &KeyDownEvent, _, cx| if ev.keystroke.key == "escape" {
+                if p.choosing { p.choosing = false } else { p.detail = None }
+                cx.stop_propagation(); cx.notify();
+            }))
+            .child(div().id("det").occlude().w(px(420.)).rounded(px(16.)).bg(color::popover()).shadow(design::shadow::frame()).px(px(22.)).pt(px(16.)).pb(px(14.)).flex().flex_col().gap(px(12.))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(header).child(facts)
+                .child(div().h(px(1.)).bg(color::border()).mx(px(-22.)))
+                .child(notes_box))
             .into_any_element())
     }
 
     /// 关联到课表, from a note's header: what this note was for, the lectures around now first.
-    pub fn picker(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub fn picker(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if let Some(note) = self.picking.clone() {
+            self.pick_leaving = None;
+            self.last_pick = Some(note);
+            let since = *self.pick_since.get_or_insert_with(web_time::Instant::now);
+            let sheet = self.picker_sheet(window, cx)?;
+            return Some(crate::wallpaper::focused(since, sheet, window));
+        }
+        self.pick_since = None;
+        if let Some(n) = self.last_pick.take() { self.pick_leaving = Some((web_time::Instant::now(), n)); }
+        let (at, note) = self.pick_leaving.clone()?;
+        self.picking = Some(note);
+        let sheet = self.picker_sheet(window, cx);
+        self.picking = None;
+        let out = sheet.and_then(|s| crate::wallpaper::leaving(at, s, window));
+        if out.is_none() { self.pick_leaving = None; }
+        out
+    }
+
+    fn picker_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let note = self.picking.clone()?;
         let (today, minute, _) = now();
         let current = self.notes_link(&note);
@@ -794,6 +913,35 @@ impl SchedulePage {
             .into_any_element())
     }
 
+    /// The courses to pick from: the library's folders, each in its own colour, else the colour its
+    /// classes have, else grey.
+    fn course_choices(&self) -> Vec<(String, String)> {
+        self.folders.iter().map(|(n, c)| (n.clone(), c.clone().or_else(|| self.data.color_of(n).map(str::to_string)).unwrap_or_else(|| "gray".into()))).collect()
+    }
+
+    /// The folders as chips: tapping one sets `field` to its name (or clears it when it is already
+    /// that), and `pick` runs with its colour; a hint when there are no folders yet.
+    fn folder_chips(&self, picked: &str, field: Entity<TextField>, pick: fn(&mut Self, &str), cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let choices = self.course_choices();
+        if choices.is_empty() {
+            return vec![div().text_size(px(12.)).text_color(color::muted_foreground()).child("Make a folder for each course and it shows up here.").into_any_element()];
+        }
+        choices.into_iter().enumerate().map(|(k, (name, c))| {
+            let on = name.eq_ignore_ascii_case(picked);
+            let (n, f, colour) = (name.clone(), field.clone(), c.clone());
+            div().id(("f-pick", k)).h(px(26.)).px(px(10.)).rounded_full().flex().items_center().gap(px(5.)).cursor_pointer().text_size(px(12.)).font_weight(FontWeight::MEDIUM)
+                .bg(if on { ink(&c) } else { wash(&c) }).text_color(if on { gpui::white() } else { ink(&c) })
+                .child(crate::ui::icon("folder", 12., if on { gpui::white() } else { ink(&c) })).child(name)
+                .on_click(cx.listener(move |p, _, _, cx| {
+                    let again = f.read(cx).text.trim().eq_ignore_ascii_case(&n);
+                    f.update(cx, |f, cx| f.set_text(if again { "" } else { &n }, cx));
+                    if !again { pick(p, &colour); }
+                    cx.notify();
+                }))
+                .into_any_element()
+        }).collect()
+    }
+
     /// What `link` points at, with its colour: lectures and items from the schedule, calendar events
     /// from EventKit. None once it is gone.
     pub fn describe(&self, link: &Link) -> Option<(model::Described, Hsla)> {
@@ -801,6 +949,45 @@ impl SchedulePage {
             Link::Event { id, start } => self.ext_describe(id, *start),
             _ => self.data.describe(link).map(|d| { let a = ink(&d.color); (d, a) }),
         }
+    }
+
+    /// What the page has open over everything (a form, the event form or a details card), for the
+    /// workspace to draw over the whole window: centred, on the blurred meadow.
+    pub fn overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if let Some(sheet) = self.sheet(window, cx) {
+            // Opening (not going from one sheet to the next): the blur closes in from the edges.
+            self.leaving = None;
+            let since = *self.sheet_since.get_or_insert_with(web_time::Instant::now);
+            self.shown = Some(self.shown_now());
+            return Some(crate::wallpaper::focused(since, sheet, window));
+        }
+        // Closed: the last sheet, drawn once more as it leaves (the opening played backwards).
+        self.sheet_since = None;
+        if let Some(last) = self.shown.take() { self.leaving = Some((web_time::Instant::now(), last)); }
+        let (at, last) = self.leaving.clone()?;
+        let now_state = self.shown_now();
+        self.show(last);
+        let sheet = self.sheet(window, cx);
+        self.show(now_state);
+        let out = sheet.and_then(|s| crate::wallpaper::leaving(at, s, window));
+        if out.is_none() { self.leaving = None; }
+        out
+    }
+
+    /// The page left the window (a note opened from a card): a sheet closed meanwhile does not
+    /// play its leaving when the page comes back.
+    pub fn forget_sheet(&mut self) { self.shown = None; self.leaving = None; self.sheet_since = None; }
+
+    fn sheet(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.form(window, cx).or_else(|| self.ext_form_view(window, cx)).or_else(|| self.details(window, cx))
+    }
+
+    fn shown_now(&self) -> Shown {
+        Shown { form: self.form.clone(), ext_form: self.ext.form.clone(), detail: self.detail.clone(), choosing: self.choosing, error: self.error, ext_error: self.ext.error.clone(), deleting: self.ext.deleting }
+    }
+
+    fn show(&mut self, s: Shown) {
+        (self.form, self.ext.form, self.detail, self.choosing, self.error, self.ext.error, self.ext.deleting) = (s.form, s.ext_form, s.detail, s.choosing, s.error, s.ext_error, s.deleting);
     }
 
     /// The link a note has, from `links`.
@@ -814,8 +1001,6 @@ impl Render for SchedulePage {
         let (today, minute, _) = now();
         // Google, iCloud …: read when the days shown move, or once a minute.
         self.ext_refresh(false);
-        let form = self.form(window, cx).or_else(|| self.ext_form_view(window, cx));
-        let details = if form.is_none() { self.details(window, cx) } else { None };
         let wide = f32::from(window.viewport_size().width) >= PANEL_MIN_WINDOW;
         let heads = self.day_heads(today, cx);
         let grid = self.grid(today, minute, window, cx);
@@ -824,7 +1009,5 @@ impl Render for SchedulePage {
             .child(div().flex_1().min_h_0().flex()
                 .child(div().flex_1().min_w_0().flex().flex_col().pl(px(8.)).child(heads).child(grid))
                 .children(panel.map(|p| div().id("sch-panel").w(px(PANEL_W)).flex_none().h_full().overflow_y_scroll().border_l_1().border_color(color::border()).child(p))))
-            .children(form)
-            .children(details)
     }
 }

@@ -2182,6 +2182,8 @@ impl Render for Workspace {
         let move_dlg = self.render_move_dialog(cx);
         // 关联到课表, opened from a note's header (fork).
         let schedule_picker = self.schedule.update(cx, |s, cx| s.picker(window, cx));
+        // 课表's forms and cards: over the whole window, centred, on the blurred meadow (fork).
+        let schedule_sheet = if self.view == View::Schedule { self.schedule.update(cx, |s, cx| s.overlay(window, cx)) } else { self.schedule.update(cx, |s, _| s.forget_sheet()); None };
         let export_md = self.render_export_md(cx);
         let import_apps = self.render_import_apps(cx);
         // Only the note stands out: a white plane flush with the window's top,
@@ -2379,6 +2381,7 @@ impl Render for Workspace {
             .children(font_menu)
             .children(confirm)
             .children(schedule_picker)
+            .children(schedule_sheet)
             .children(move_dlg)
             .children(export_md)
             .children(import_apps)

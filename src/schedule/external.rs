@@ -6,7 +6,8 @@
 use super::calendars::{self, Access, Calendar, Draft, Event};
 use super::model::{self, Day, Described, Link, Minute};
 use super::{Block, SchedulePage, join, now};
-use crate::design::{self, Button, ButtonSize, Checkbox, Label, color};
+use crate::design::{self, Button, ButtonSize, Checkbox, color};
+use crate::input::TextField;
 use gpui::{prelude::FluentBuilder, *};
 use std::time::Duration;
 use web_time::Instant;
@@ -27,6 +28,8 @@ pub(super) struct Ext {
     pub form: Option<ExtForm>,
     /// 删除 asked once: the form shows its confirmation.
     pub deleting: bool,
+    /// The form's calendar menu is open.
+    pub cal_menu: bool,
     pub error: Option<String>,
 }
 
@@ -227,8 +230,10 @@ impl SchedulePage {
         let (d0, m0, _) = model::local(start as u64);
         let (_, m1, _) = model::local(end as u64);
         let (y, m, d) = model::ymd(d0);
-        self.set(&self.name, &title, cx); self.set(&self.place, &place, cx);
-        self.set(&self.date, &format!("{y}-{m:02}-{d:02}"), cx);
+        let _ = (y, m, d);
+        self.hint(&self.date, "Date", cx); self.hint(&self.time, "Start", cx); self.hint(&self.until, "End", cx);
+        self.set(&self.x_title, &title, cx); self.set(&self.x_place, &place, cx);
+        self.set(&self.date, &model::day_input(d0, now().0), cx);
         self.set(&self.time, &if all_day { String::new() } else { model::hm(m0) }, cx);
         self.set(&self.until, &if all_day { String::new() } else { model::hm(m1) }, cx);
         self.ext.form = Some(ExtForm { old, calendar, all_day });
@@ -236,7 +241,8 @@ impl SchedulePage {
         self.ext.error = None;
         self.detail = None;
         self.add_menu = false;
-        window.focus(&self.name.read(cx).focus_handle(cx), cx);
+        self.ext.cal_menu = false;
+        window.focus(&self.x_title.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
 
@@ -245,7 +251,7 @@ impl SchedulePage {
     pub(super) fn save_ext_form(&mut self, cx: &mut Context<Self>) {
         let Some(f) = self.ext.form.clone() else { return };
         let fail = |p: &mut Self, s: &str, cx: &mut Context<Self>| { p.ext.error = Some(s.to_string()); cx.notify(); };
-        let title = self.text(&self.name, cx);
+        let title = self.text(&self.x_title, cx);
         if title.is_empty() { return fail(self, "Give the event a title.", cx) }
         if f.calendar.is_empty() { return fail(self, "Pick a calendar for it.", cx) }
         let Some(day) = model::parse_day(&self.text(&self.date, cx), now().0) else { return fail(self, "Dates look like fri, tomorrow, 3.12 or 2026-12-03.", cx) };
@@ -254,7 +260,7 @@ impl SchedulePage {
             if e <= s { return fail(self, "It has to end after it starts.", cx) }
             (unix_of(day, s), unix_of(day, e))
         };
-        let draft = Draft { calendar: f.calendar.clone(), title, location: self.text(&self.place, cx), start, end, all_day: f.all_day };
+        let draft = Draft { calendar: f.calendar.clone(), title, location: self.text(&self.x_place, cx), start, end, all_day: f.all_day };
         match calendars::save(f.old.as_ref().map(|(id, s)| (id.as_str(), *s)), &draft) {
             Ok(()) => { self.ext.form = None; self.anchor = day; self.ext_refresh(true); cx.notify(); }
             Err(e) => fail(self, &e, cx),
@@ -270,45 +276,98 @@ impl SchedulePage {
         }
     }
 
+    /// The event form, laid out like a calendar's own: the title written large in place, then a row
+    /// each for when, where and which calendar, each with its glyph; Delete is quiet red text that asks
+    /// once, inline.
     pub(super) fn ext_form_view(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let f = self.ext.form.clone()?;
         let editing = f.old.is_some();
-        let cals = self.writable_calendars();
-        let account = self.cal(&f.calendar).map(|c| c.account.clone()).unwrap_or_default();
-        let body = div().flex().flex_col().gap(px(14.))
-            .child(self.field("x-title", "Title", &self.name, window, cx))
-            .child(div().flex().gap(px(10.))
-                .child(self.field("x-date", "Date", &self.date, window, cx))
-                .when(!f.all_day, |d| d.child(self.field("x-start", "Starts", &self.time, window, cx)).child(self.field("x-end", "Ends", &self.until, window, cx))))
-            .child(div().id("x-allday").flex().items_center().gap(px(8.)).cursor_pointer().child(Checkbox::new(f.all_day)).child(Label::new("All day"))
-                .on_click(cx.listener(|p, _, _, cx| { if let Some(f) = p.ext.form.as_mut() { f.all_day = !f.all_day; } cx.notify(); })))
-            .child(self.field("x-place", "Location", &self.place, window, cx))
-            .child(div().flex().flex_col().gap(px(6.)).child(Label::new(if account.is_empty() { "Calendar".to_string() } else { format!("Calendar · {account}") }))
-                .child(div().flex().flex_wrap().gap(px(6.)).children(cals.into_iter().enumerate().map(|(k, c)| {
-                    let (on, id) = (c.id == f.calendar, c.id.clone());
-                    div().id(("x-cal", k)).h(px(28.)).px(px(10.)).rounded_full().flex().items_center().gap(px(6.)).cursor_pointer()
-                        .bg(if on { wash_of(c.rgb) } else { color::muted() }).border_1().border_color(if on { ink_of(c.rgb) } else { gpui::transparent_black() })
-                        .child(div().size(px(8.)).rounded_full().bg(ink_of(c.rgb)))
-                        .child(div().text_size(px(12.)).font_weight(if on { FontWeight::SEMIBOLD } else { FontWeight::NORMAL }).text_color(color::foreground()).child(c.title.clone()))
-                        .on_click(cx.listener(move |p, _, _, cx| { if let Some(f) = p.ext.form.as_mut() { f.calendar = id.clone(); } cx.notify(); }))
-                }))));
-        let footer = div().w_full().flex().items_center().gap(px(8.))
-            .when(editing, |d| d.child(if self.ext.deleting {
-                Button::destructive("x-delete").label("Delete this event").on_click(cx.listener(|p, _, _, cx| p.delete_ext(cx)))
-            } else {
-                Button::ghost("x-delete").sized(ButtonSize::Default).icon("bin").label("Delete").on_click(cx.listener(|p, _, _, cx| p.delete_ext(cx)))
-            }))
+        let cal = self.cal(&f.calendar).cloned();
+        // A borderless input in a row: the text is the control.
+        let bare = |id: &'static str, e: &Entity<TextField>, window: &Window, cx: &App| {
+            let h = e.read(cx).focus_handle(cx);
+            div().id(id).flex_1().min_w_0().h(px(32.)).px(px(8.)).mx(px(-8.)).rounded(px(7.)).flex().items_center().cursor_text()
+                .when(e.read(cx).is_focused(window), |d| d.bg(color::muted())).hover(|s| s.bg(color::muted_half()))
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| window.focus(&h, cx))
+                .child(div().flex_1().min_w_0().overflow_hidden().child(e.clone()))
+        };
+        // A small field that only shows its box while it has the caret or the pointer.
+        let chip = |id: &'static str, e: &Entity<TextField>, w: f32, window: &Window, cx: &App| {
+            let h = e.read(cx).focus_handle(cx);
+            let on = e.read(cx).is_focused(window);
+            div().id(id).w(px(w)).flex_none().h(px(30.)).px(px(9.)).rounded(px(7.)).flex().items_center().cursor_text()
+                .bg(if on { color::background() } else { color::accent() }).border_1().border_color(if on { color::ring() } else { gpui::transparent_black() })
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| window.focus(&h, cx))
+                .child(div().flex_1().min_w_0().overflow_hidden().child(e.clone()))
+        };
+        let row = |glyph: &'static str| div().min_h(px(40.)).flex().items_center().gap(px(12.))
+            .child(div().w(px(18.)).flex_none().flex().justify_center().child(crate::ui::icon(glyph, 16., color::muted_foreground())));
+        let rule = || div().h(px(1.)).bg(color::border()).mx(px(-24.));
+        let title = div().flex().items_center().gap(px(10.))
+            .child(div().w(px(4.)).h(px(30.)).flex_none().rounded_full().bg(cal.as_ref().map_or_else(color::muted_foreground, |c| ink_of(c.rgb))))
+            .child(bare("x-title", &self.x_title, window, cx))
+            .child(Button::ghost("x-close").icon("x").on_click(cx.listener(|p, _, _, cx| p.close_ext_form(cx))));
+        let when = row("clock")
+            .child(chip("x-date", &self.date, 132., window, cx))
+            .when(!f.all_day, |d| d.child(chip("x-start", &self.time, 74., window, cx))
+                .child(div().text_size(px(13.)).text_color(color::muted_foreground()).child("→"))
+                .child(chip("x-end", &self.until, 74., window, cx)))
             .child(div().flex_1())
-            .child(Button::outline("x-cancel").label("Cancel").on_click(cx.listener(|p, _, _, cx| p.close_ext_form(cx))))
-            .child(Button::primary("x-save").label("Save").on_click(cx.listener(|p, _, _, cx| p.save_ext_form(cx))));
+            .child(div().id("x-allday").flex().items_center().gap(px(8.)).cursor_pointer()
+                .child(div().text_size(px(12.5)).text_color(color::muted_foreground()).child("All-day"))
+                .child(design::Switch::new(f.all_day))
+                .on_click(cx.listener(|p, _, _, cx| { if let Some(f) = p.ext.form.as_mut() { f.all_day = !f.all_day; } cx.notify(); })));
+        let place = row("map-pin").child(bare("x-place", &self.x_place, window, cx));
+        let menu = self.ext.cal_menu.then(|| self.calendar_menu(&f.calendar, cx));
+        let calendar = row("calendar").child(div().id("x-cal").relative().flex_1().min_w_0().h(px(32.)).px(px(8.)).mx(px(-8.)).rounded(px(7.)).flex().items_center().gap(px(8.)).cursor_pointer()
+            .hover(|s| s.bg(color::muted_half())).when(self.ext.cal_menu, |d| d.bg(color::muted()))
+            .child(div().size(px(10.)).flex_none().rounded_full().bg(cal.as_ref().map_or_else(color::muted_foreground, |c| ink_of(c.rgb))))
+            .child(div().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(color::foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis()
+                .child(cal.as_ref().map_or("Choose a calendar".to_string(), |c| c.title.clone())))
+            .when_some(cal.as_ref().map(|c| c.account.clone()), |d, a| d.child(div().min_w_0().text_size(px(12.5)).text_color(color::muted_foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis().child(a)))
+            .child(div().flex_1())
+            .child(crate::ui::icon("chevron-down", 14., color::muted_foreground()))
+            .on_click(cx.listener(|p, _, _, cx| { p.ext.cal_menu = !p.ext.cal_menu; cx.notify(); }))
+            .children(menu));
+        let footer = div().w_full().flex().items_center().gap(px(8.))
+            .when(editing && !self.ext.deleting, |d| d.child(div().id("x-delete").px(px(2.)).text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(color::destructive()).cursor_pointer()
+                .hover(|s| s.opacity(0.75)).child("Delete event").on_click(cx.listener(|p, _, _, cx| p.delete_ext(cx)))))
+            .when(self.ext.deleting, |d| d.child(div().flex_1().min_w_0().text_size(px(12.5)).text_color(color::muted_foreground()).child("Delete it from every device?"))
+                .child(Button::ghost("x-keep").sized(ButtonSize::Sm).label("Keep").on_click(cx.listener(|p, _, _, cx| { p.ext.deleting = false; cx.notify(); })))
+                .child(Button::destructive("x-delete-yes").sized(ButtonSize::Sm).label("Delete").on_click(cx.listener(|p, _, _, cx| p.delete_ext(cx)))))
+            .when(!self.ext.deleting, |d| d.child(div().flex_1())
+                .child(Button::ghost("x-cancel").sized(ButtonSize::Sm).label("Cancel").on_click(cx.listener(|p, _, _, cx| p.close_ext_form(cx))))
+                .child(Button::primary("x-save").sized(ButtonSize::Sm).label(if editing { "Done" } else { "Add event" }).on_click(cx.listener(|p, _, _, cx| p.save_ext_form(cx)))));
         Some(design::scrim().id("x-scrim").occlude()
-            .on_key_down(cx.listener(|p, ev: &KeyDownEvent, _, cx| if ev.keystroke.key == "escape" { p.close_ext_form(cx); cx.stop_propagation(); }))
-            .child(design::Dialog::new("x-form").w(px(480.)).title(if editing { "Edit event" } else { "New event" })
-                .when(self.ext.deleting, |d| d.description("This deletes it from the calendar on every device. A repeating event loses only this one."))
-                .closable(cx.listener(|p, _, _, cx| p.close_ext_form(cx)))
-                .child(body)
-                .when_some(self.ext.error.clone(), |d, e| d.child(div().text_size(px(12.5)).text_color(color::destructive()).child(e)))
-                .footer(footer))
+            .on_key_down(cx.listener(|p, ev: &KeyDownEvent, _, cx| if ev.keystroke.key == "escape" {
+                if p.ext.cal_menu { p.ext.cal_menu = false } else { p.ext.form = None; p.ext.deleting = false; p.ext.error = None }
+                cx.stop_propagation(); cx.notify();
+            }))
+            .child(div().id("x-sheet").occlude().w(px(440.)).rounded(px(16.)).bg(color::popover()).shadow(design::shadow::frame()).px(px(24.)).pt(px(16.)).pb(px(16.)).flex().flex_col().gap(px(6.))
+                .child(title)
+                .child(div().h(px(4.)))
+                .child(when).child(place).child(calendar)
+                .when_some(self.ext.error.clone(), |d, e| d.child(div().pl(px(30.)).text_size(px(12.5)).text_color(color::destructive()).child(e)))
+                .child(div().h(px(6.))).child(rule()).child(div().h(px(8.)))
+                .child(footer))
             .into_any_element())
+    }
+
+    /// The calendars an event can go in, under the account each belongs to; the one picked ticked.
+    fn calendar_menu(&self, picked: &str, cx: &mut Context<Self>) -> AnyElement {
+        let mut menu = design::Popover::new("x-cal-menu").menu().w(px(280.))
+            .on_mouse_down_out(cx.listener(|p, _, _, cx| { p.ext.cal_menu = false; cx.notify(); }));
+        let cals = self.writable_calendars();
+        let mut accounts: Vec<String> = vec![];
+        for c in &cals { if !accounts.contains(&c.account) { accounts.push(c.account.clone()); } }
+        for a in accounts {
+            menu = menu.child(design::MenuLabel::new(a.clone()));
+            for (k, c) in cals.iter().enumerate().filter(|(_, c)| c.account == a) {
+                let id = c.id.clone();
+                menu = menu.child(design::MenuItem::new(("x-cal-pick", k)).leading(div().size(px(10.)).rounded_full().bg(ink_of(c.rgb))).label(c.title.clone()).checked(c.id == picked)
+                    .on_click(cx.listener(move |p, _, _, cx| { if let Some(f) = p.ext.form.as_mut() { f.calendar = id.clone(); } p.ext.cal_menu = false; cx.notify(); })));
+            }
+        }
+        div().absolute().left_0().top_full().child(deferred(anchored().snap_to_window_with_margin(px(8.)).child(div().pt(px(6.)).child(menu))).with_priority(3)).into_any_element()
     }
 }

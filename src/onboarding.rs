@@ -35,8 +35,8 @@ use super::*;
 /// greyscale PNG (palette index × 17) under a first row holding the palette
 /// as RGB bytes. Made from a generated clip by the intro script.
 const FILM: &str = "onboarding/intro.png";
-const FILM_W: usize = 400;
-const FILM_H: usize = 225;
+pub(crate) const FILM_W: usize = 400;
+pub(crate) const FILM_H: usize = 225;
 pub const FILM_FPS: f32 = 12.;
 
 pub struct Film { pub frames: Vec<Vec<u8>>, pub colors: Vec<Hsla> }

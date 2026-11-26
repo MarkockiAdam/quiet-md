@@ -135,6 +135,12 @@ pub fn lay_out(blocks: &[(Minute, Minute)]) -> Vec<(usize, usize)> {
     out
 }
 
+/// A day as a date field shows it: "Thu 26 Nov", with the year when it is not this one.
+pub fn day_input(day: Day, today: Day) -> String {
+    let (y, _, _) = ymd(day);
+    if y == ymd(today).0 { day_label(day) } else { format!("{} {y}", day_label(day)) }
+}
+
 /// "Mon 24 Nov".
 pub fn day_label(day: Day) -> String { let (_, m, d) = ymd(day); format!("{} {} {}", WEEKDAYS[weekday_of(day) as usize], d, MONTHS[m as usize - 1]) }
 
@@ -163,6 +169,15 @@ pub fn parse_day(s: &str, today: Day) -> Option<Day> {
     }
     if let Some(w) = WEEKDAYS.iter().position(|w| s.len() >= 3 && w.to_ascii_lowercase().starts_with(&s[..3]) && s.chars().all(|c| c.is_ascii_alphabetic())) {
         return Some(today + (w as i64 - weekday_of(today) as i64).rem_euclid(7));
+    }
+    // "Thu 26 Nov", "26 Nov", "26 November 2026", "Nov 26": what `day_input` writes, and what people type.
+    let words: Vec<&str> = s.split(|c: char| c.is_whitespace() || c == ',').filter(|w| !w.is_empty()).collect();
+    let month_of = |w: &str| (w.len() >= 3).then(|| MONTHS.iter().position(|m| m.to_ascii_lowercase() == w[..3])).flatten().map(|i| i as u32 + 1);
+    if let Some(mi) = words.iter().position(|w| w.chars().all(|c| c.is_ascii_alphabetic()) && month_of(w).is_some()) {
+        let m = month_of(words[mi])?;
+        let nums: Vec<i64> = words.iter().filter_map(|w| w.parse::<i64>().ok()).collect();
+        let (d, y) = match nums.as_slice() { [d] => (*d, ymd(today).0), [d, y] if *y > 31 => (*d, *y), [y, d] if *y > 31 => (*d, *y), _ => return None };
+        return ((1..=31).contains(&d) && d as u32 <= crate::time::days_in_month(y, m)).then(|| crate::time::days_from_civil(y, m, d as u32));
     }
     let valid = |y: i64, m: u32, d: u32| ((1..=12).contains(&m) && d >= 1 && d <= crate::time::days_in_month(y, m)).then(|| crate::time::days_from_civil(y, m, d));
     let parts: Vec<&str> = s.split(['-', '.', '/']).filter(|p| !p.is_empty()).collect();
@@ -362,6 +377,15 @@ mod tests {
         assert_eq!(parse_day("Friday", today), Some(today + 1));
         assert_eq!(parse_day("mon", today), Some(today + 4));
         assert_eq!(parse_day("31.2.2026", today), None);
+        // Words, as the date field shows them.
+        assert_eq!(parse_day("Thu 26 Nov", today), Some(today));
+        assert_eq!(parse_day("3 Dec", today), Some(today + 7));
+        assert_eq!(parse_day("december 3, 2026", today), Some(today + 7));
+        assert_eq!(parse_day("Nov 30", today), Some(today + 4));
+        assert_eq!(parse_day("Fri 5 Feb 2027", today), Some(crate::time::days_from_civil(2027, 2, 5)));
+        assert_eq!(parse_day("30 Feb", today), None);
+        assert_eq!(parse_day(&day_input(today + 7, today), today), Some(today + 7));
+        assert_eq!(day_input(crate::time::days_from_civil(2027, 2, 5), today), "Fri 5 Feb 2027");
         assert_eq!(parse_day("soon", today), None);
         assert_eq!(day_label(today), "Thu 26 Nov");
         assert_eq!(ymd(today), (2026, 11, 26));

@@ -59,14 +59,24 @@ impl Workspace {
     pub(crate) fn push_schedule_links(&mut self, cx: &mut Context<Self>) {
         let mut links: HashMap<String, Vec<(String, String)>> = HashMap::new();
         let mut notes: Vec<(u64, String, String)> = vec![];
+        let mut folders: Vec<(String, Option<String>)> = vec![];
         for e in self.entries.iter() {
-            if e.meta.folder.is_some() && e.note.is_none() { continue }
+            // A folder is a course: its name and colour are what the schedule suggests (not the
+            // top-level folders, which are the libraries themselves).
+            if e.meta.folder.is_some() && e.note.is_none() {
+                let name = e.title.trim().to_string();
+                if crate::shared_store::top_of_row(&e.id).is_none() && !name.is_empty() && !folders.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) {
+                    folders.push((name, e.meta.color.clone()));
+                }
+                continue
+            }
             if let Some(k) = &e.meta.event { links.entry(k.clone()).or_default().push((e.id.clone(), e.title.clone())); }
             notes.push((e.meta.opened.max(e.meta.modified), e.id.clone(), e.title.clone()));
         }
         notes.sort_by(|a, b| b.0.cmp(&a.0));
         let notes = notes.into_iter().map(|(_, id, t)| (id, t)).collect();
-        self.schedule.update(cx, |s, _| { s.links = links; s.notes = notes; });
+        folders.sort_by_key(|(n, _)| n.to_lowercase());
+        self.schedule.update(cx, |s, _| { s.links = links; s.notes = notes; s.folders = folders; });
     }
 
     /// The open note's link to the schedule, as a chip for its header: a click shows that day.
