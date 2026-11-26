@@ -43,7 +43,7 @@
 <tr><td><p><code>⌘ ]</code> / <code>⌘ /</code></p></td><td><p>展开或收起侧栏 / 查看快捷键</p></td></tr>
 </tbody></table>
 <h1>笔记完全属于你</h1>
-<p>你的文档保存在 <code>~/Documents/Quiet.md</code>。每篇文档都是 <code>docs</code> 里的一个 XML 文件，图片和附件保存在 <code>assets</code> 里。用时间机器备份整个文件夹，或者把它拷到另一台 Mac 上即可。</p>
+<p>你的文档保存在 <code>~/Documents/Moss</code>。每篇文档都是 <code>docs</code> 里的一个 XML 文件，图片和附件保存在 <code>assets</code> 里。用时间机器备份整个文件夹，或者把它拷到另一台 Mac 上即可。</p>
 <blockquote><p>在本地书写和阅读笔记都不需要联网。加载网络图片时会访问网络，是否自动下载可以在设置里控制。</p></blockquote>
 <p>备份和迁移的详细说明，请看 <cite type="doc" href="导入、导出与备份.xml" file-type="docx">导入、导出与备份</cite>。</p>
 <hr/><p align="center">准备好了吗？打开 <cite type="doc" href="写作与排版/书写：文字、标题与段落.xml" file-type="docx">书写：文字、标题与段落</cite>。</p>

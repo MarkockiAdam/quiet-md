@@ -28,7 +28,7 @@ const NOTICE: &str = "quiet counts how often its commands run (which ones and ho
 
 fn file() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("QUIET_TELEMETRY_FILE") { return Some(PathBuf::from(p)); }
-    Some(dirs::data_local_dir()?.join("quiet-md").join("cli-usage.json"))
+    Some(dirs::data_local_dir()?.join(fdl_core::store::APP_DIR).join("cli-usage.json"))
 }
 
 fn url() -> String { std::env::var("QUIET_TELEMETRY_URL").unwrap_or_else(|_| URL.to_string()) }

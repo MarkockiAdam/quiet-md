@@ -14,9 +14,9 @@ static OPENED: OnceLock<PathBuf> = OnceLock::new();
 pub fn dir() -> PathBuf {
     if let Some(d) = std::env::var_os("QUIET_MD_LOG_DIR") { return PathBuf::from(d) }
     #[cfg(target_os = "macos")]
-    let base = dirs::home_dir().map(|h| h.join("Library").join("Logs").join("quiet.md"));
+    let base = dirs::home_dir().map(|h| h.join("Library").join("Logs").join("Moss"));
     #[cfg(not(target_os = "macos"))]
-    let base = dirs::data_local_dir().map(|d| d.join("quiet.md").join("logs"));
+    let base = dirs::data_local_dir().map(|d| d.join(fdl_core::store::APP_DIR).join("logs"));
     base.unwrap_or_else(|| fdl_core::vfs::temp_dir().join("quiet.md-logs"))
 }
 

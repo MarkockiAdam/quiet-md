@@ -104,7 +104,7 @@ impl Home {
     /// touch this computer's list).
     pub fn list_file() -> PathBuf {
         if let Some(f) = std::env::var_os("QUIET_MD_FOLDERS") { return PathBuf::from(f); }
-        dirs::data_local_dir().unwrap_or_else(crate::vfs::temp_dir).join("quiet-md").join("folders.json")
+        crate::store::app_data_dir().join("folders.json")
     }
 
     /// Where builds before the rename kept the list (`roots.json`): read once
@@ -112,7 +112,7 @@ impl Home {
     /// read it; it is also the way back). Drop the reading after 0.1.16.
     fn old_list_file() -> Option<PathBuf> {
         if std::env::var_os("QUIET_MD_FOLDERS").is_some() { return None; }
-        Some(dirs::data_local_dir().unwrap_or_else(crate::vfs::temp_dir).join("quiet-md").join("roots.json"))
+        Some(crate::store::app_data_dir().join("roots.json"))
     }
 
     /// The list in `path`, if it is there and reads.
@@ -519,7 +519,7 @@ mod tests {
         // Taken over once: the next launch neither restores nor loses anything.
         let mut ws = Home::open(vec![TopFolderEntry { key: key.clone(), path: a.clone(), bookmark: None, added: 0 }], true);
         assert_eq!(ws.list().len(), 2);
-        if let Some(d) = dirs::data_local_dir() { let _ = crate::vfs::remove_dir_all(d.join("quiet-md/recovery").join(&key)); }
+        let _ = crate::vfs::remove_dir_all(crate::store::app_data_dir().join("recovery").join(&key));
     }
 
     /// A list written before the rename (`roots.json`, its `roots`) still reads.

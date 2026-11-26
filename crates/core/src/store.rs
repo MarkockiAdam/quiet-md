@@ -492,7 +492,7 @@ fn parsed_cache_version() -> String { format!("{}-{PARSED_CACHE}", env!("CARGO_P
 /// Beside the other things this computer keeps about `root` (named by `key`), in the cache folder.
 fn parsed_cache_path(root: &Path, key: &str) -> PathBuf {
     let tmp = crate::vfs::temp_dir();
-    let base = if cfg!(test) || root.starts_with(&tmp) { tmp.join("quiet-md-local") } else { dirs::cache_dir().unwrap_or(tmp).join("quiet-md") };
+    let base = if cfg!(test) || root.starts_with(&tmp) { tmp.join("quiet-md-local") } else { dirs::cache_dir().unwrap_or(tmp).join(APP_DIR) };
     base.join("list").join(format!("{key}.json"))
 }
 
@@ -878,13 +878,20 @@ pub fn library_key(root: &Path) -> String {
 /// temporary folder (scripted runs), which never touch the real one.
 fn local_file_for(root: &Path, key: &str) -> PathBuf { local_base(root).join("libraries").join(format!("{key}.json")) }
 
+/// Moss (fork): the name of its own data folders (application data, caches), apart from Quiet.md's,
+/// so the two apps never share where the library is, its locks, recovery copies or settings.
+pub const APP_DIR: &str = "moss";
+
+/// This computer's application data folder for Moss (`APP_DIR`).
+pub fn app_data_dir() -> PathBuf { dirs::data_local_dir().unwrap_or_else(crate::vfs::temp_dir).join(APP_DIR) }
+
 /// The application data folder `local_file_for` uses; `root` empty: this
 /// computer's (a scripted run with `QUIET_MD_HOME` gets a temporary one).
 fn local_base(root: &Path) -> PathBuf {
     let tmp = crate::vfs::temp_dir();
     let scripted = root.as_os_str().is_empty() && std::env::var_os("QUIET_MD_HOME").is_some();
     if cfg!(test) || scripted || (!root.as_os_str().is_empty() && (root.starts_with(&tmp) || tmp.fs_canonicalize().is_ok_and(|t| root.starts_with(t)))) { tmp.join("quiet-md-local") }
-    else { dirs::data_local_dir().unwrap_or_else(crate::vfs::temp_dir).join("quiet-md") }
+    else { app_data_dir() }
 }
 
 /// Whether an index key (a relative path, folders ending in `/`) is one
@@ -895,7 +902,7 @@ fn listed(key: &str) -> bool {
 }
 
 /// The recovery copies (`Store::recover_later`) of library `key`.
-fn recovery_dir_for(key: &str) -> PathBuf { dirs::data_local_dir().unwrap_or_else(crate::vfs::temp_dir).join("quiet-md/recovery").join(key) }
+fn recovery_dir_for(key: &str) -> PathBuf { app_data_dir().join("recovery").join(key) }
 
 /// The id, name and parent of every library entry, from where it is.
 fn derive_tree(index: &mut HashMap<String, Meta>) {
@@ -946,8 +953,9 @@ impl Store {
 
     pub fn default_dir() -> PathBuf {
         // The web build's library lives in memory (vfs).
-        if cfg!(target_family = "wasm") { return PathBuf::from("/Quiet.md") }
-        dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents"))).unwrap_or_else(|| PathBuf::from(".")).join("Quiet.md")
+        // Moss (fork): its own folder, not Quiet.md's, so the two apps never open one library unasked.
+        if cfg!(target_family = "wasm") { return PathBuf::from("/Moss") }
+        dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents"))).unwrap_or_else(|| PathBuf::from(".")).join("Moss")
     }
 
     /// 应用级设置: preferences, shortcuts, themes, emoji and the window's
@@ -962,7 +970,7 @@ impl Store {
             let _ = crate::vfs::create_dir_all(&d);
             return d;
         }
-        let d = dirs::data_local_dir().unwrap_or_else(crate::vfs::temp_dir).join("quiet-md").join("settings");
+        let d = app_data_dir().join("settings");
         if !d.fs_is_dir() {
             let from = legacy();
             let _ = crate::vfs::create_dir_all(&d);
@@ -1226,7 +1234,7 @@ impl Store {
 
     /// The pointer to a library outside Documents; per user, never synced.
     pub fn location_file() -> PathBuf {
-        dirs::data_local_dir().unwrap_or_else(crate::vfs::temp_dir).join("quiet-md").join("library.json")
+        app_data_dir().join("library.json")
     }
 
     /// Use `root` for the rest of this run, and from now on unless

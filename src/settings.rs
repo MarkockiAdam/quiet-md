@@ -919,7 +919,7 @@ fn sample_page(t: &themes::Theme, s: f32) -> Div {
         .border_1().border_color(st.color("pre.border").unwrap_or_else(|| st.token("code_border")))
         .font_family(mono.clone()).text_size(sc(dl(st.num("pre.size")))).line_height(sc(dl(st.num("pre.line")))).text_color(st.color("pre.color").unwrap_or_else(|| st.token("code_text")))
         .child(code_line("1", vec![tok("# ", syn("comment")), tok(tr("备份文档库", "back up your documents"), syn("comment"))]))
-        .child(code_line("2", vec![tok("cd ", syn("function")), tok("~/Documents ", text), tok("&& ", syn("keyword")), tok("tar ", syn("function")), tok("-czf ", syn("attr")), tok("\"Quiet.tar.gz\" ", syn("string")), tok("Quiet.md", text)]))
+        .child(code_line("2", vec![tok("cd ", syn("function")), tok("~/Documents ", text), tok("&& ", syn("keyword")), tok("tar ", syn("function")), tok("-czf ", syn("attr")), tok("\"Moss.tar.gz\" ", syn("string")), tok("Moss", text)]))
         .child(code_line("3", vec![tok("echo ", syn("function")), tok("\"done\"", syn("string"))]));
     // One column, like a page: a centred text column (the theme's width, scaled,
     // up to 880 so a wide frame isn't mostly margin) whose bottom fades into

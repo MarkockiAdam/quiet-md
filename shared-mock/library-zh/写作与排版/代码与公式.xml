@@ -49,7 +49,7 @@ ORDER  BY 1;</code></pre>
 }</code></pre>
 <pre lang="bash" caption="备份文档"><code># 给文档打一个带日期的压缩包。
 cd ~/Documents
-tar -czf "Quiet-$(date +%F).tar.gz" Quiet.md</code></pre>
+tar -czf "Moss-$(date +%F).tar.gz" Moss</code></pre>
 <h2>命名与换行</h2><p>点击代码块上方的描述，可以写上文件名或一句说明。长代码行默认横向滚动；如果更想不滚动就能读完，可以在代码块的控件里打开“自动换行”。</p>
 <pre lang="plaintext" caption="错误日志示例" wrap="true"><code>2026-11-01 09:42:17.381 ERROR [save] 磁盘空间不足（No space left on device）。文档尚未保存，请先清理出一些磁盘空间，然后再重新保存这篇文档。</code></pre>
 <h2>复制与折叠</h2><ul><li>点击复制按钮，会复制整个代码块的内容，不带行号。</li><li>代码块很长时，可以点左侧的三角形把它折叠起来。</li><li>是否显示行号由文档主题决定：Craft、飞书和 Obsidian 显示行号，Notion 不显示。</li></ul>
