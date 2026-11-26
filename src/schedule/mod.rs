@@ -10,7 +10,7 @@ mod external;
 pub mod links;
 pub mod model;
 
-use crate::design::{self, Button, ButtonSize, Checkbox, Field, Label, MenuItem, Popover, Segment, Segmented, color};
+use crate::design::{self, Button, ButtonSize, Checkbox, MenuItem, Popover, Segment, Segmented, color};
 use crate::input::{TextField, TextFieldEvent};
 use crate::ui::TipExt;
 use gpui::{prelude::FluentBuilder, *};
@@ -79,6 +79,10 @@ pub struct SchedulePage {
     ext: external::Ext,
     /// When the sheet now open (a form, the event form, a details card) opened, for its close-in.
     sheet_since: Option<web_time::Instant>,
+    /// The note the item form is adding a task for (from the note's schedule sheet), and the course
+    /// that note's folder suggests.
+    form_note: Option<String>,
+    pick_course: String,
     /// When 关联到课表 opened, for its close-in.
     pick_since: Option<web_time::Instant>,
     /// What the open sheet shows, kept each frame so it can be drawn once more on its way out; and
@@ -150,7 +154,7 @@ impl SchedulePage {
         log::info!("calendars: access at start {:?}", calendars::access());
         SchedulePage {
             data: model::load(), anchor: now().0, days: 7, mini: None, add_menu: false, form: None, error: None,
-            scroll: ScrollHandle::new(), placed: false, links: HashMap::new(), notes: vec![], folders: vec![], detail: None, choosing: false, picking: None, find, ext: Default::default(), sheet_since: None, pick_since: None, shown: None, leaving: None, last_pick: None, pick_leaving: None,
+            scroll: ScrollHandle::new(), placed: false, links: HashMap::new(), notes: vec![], folders: vec![], detail: None, choosing: false, picking: None, find, ext: Default::default(), sheet_since: None, pick_since: None, form_note: None, pick_course: String::new(), shown: None, leaving: None, last_pick: None, pick_leaving: None,
             name, kind, place, start, end, course, date, time, until, x_title, x_place, _subs: subs,
         }
     }
@@ -181,11 +185,12 @@ impl SchedulePage {
     fn open_detail(&mut self, link: Link, cx: &mut Context<Self>) { self.detail = Some(link); self.choosing = false; self.add_menu = false; cx.notify(); }
 
     /// 关联到课表 for `note` (its header's calendar button).
-    pub fn pick_for(&mut self, note: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn pick_for(&mut self, note: String, course: String, window: &mut Window, cx: &mut Context<Self>) {
         self.picking = Some(note);
+        self.pick_course = course;
         self.data = model::load();
         self.read_around(now().0);
-        let f = self.find.clone(); f.update(cx, |f, cx| f.set_text("", cx));
+        let f = self.find.clone(); f.update(cx, |f, cx| { f.set_text("", cx); f.set_placeholder("Search classes and events", cx); });
         window.focus(&f.read(cx).focus_handle(cx), cx);
         cx.notify();
     }
@@ -212,6 +217,7 @@ impl SchedulePage {
     }
 
     fn open_item(&mut self, id: Option<String>, kind: Kind, window: &mut Window, cx: &mut Context<Self>) {
+        self.form_note = None;
         let i = id.as_ref().and_then(|id| self.data.items.iter().find(|i| &i.id == id)).cloned().unwrap_or(Item { kind, ..Default::default() });
         self.hint(&self.name, "Title", cx); self.hint(&self.course, "New course", cx);
         self.hint(&self.date, "Date", cx); self.hint(&self.time, "Time", cx); self.hint(&self.until, "End", cx);
@@ -226,7 +232,26 @@ impl SchedulePage {
         cx.notify();
     }
 
-    fn close_form(&mut self, cx: &mut Context<Self>) { self.form = None; self.error = None; cx.notify(); }
+    fn close_form(&mut self, cx: &mut Context<Self>) { self.form = None; self.error = None; self.form_note = None; cx.notify(); }
+
+    /// From the note's sheet straight to a form: one sheet for the other, as between two of the page's
+    /// own, so neither plays its motion (the blur stays put).
+    fn swap_from_picker(&mut self) {
+        (self.last_pick, self.pick_leaving, self.pick_since) = (None, None, None);
+        self.sheet_since = web_time::Instant::now().checked_sub(crate::wallpaper::CLOSE_IN * 2);
+    }
+
+    /// 添加作业 from a note's schedule sheet: the item form, the task remembering the note, its course
+    /// the note's folder when that is one.
+    fn add_task(&mut self, kind: Kind, window: &mut Window, cx: &mut Context<Self>) {
+        let note = self.picking.take();
+        self.swap_from_picker();
+        self.open_item(None, kind, window, cx);
+        self.form_note = note;
+        let course = self.pick_course.clone();
+        self.set(&self.course, &course, cx);
+        cx.notify();
+    }
 
     fn save_form(&mut self, cx: &mut Context<Self>) {
         let Some(form) = self.form.clone() else { return };
@@ -247,7 +272,9 @@ impl SchedulePage {
                 let (Ok(time), Ok(end)) = (time_of(self.text(&self.time, cx)), time_of(self.text(&self.until, cx))) else { self.error = Some(BAD_TIME); return cx.notify() };
                 if let (Some(t), Some(e)) = (time, end) && e <= t { self.error = Some("It has to end after it starts."); return cx.notify() }
                 let end = if kind == Kind::Assignment || time.is_none() { None } else { end };
-                let i = Item { id: id.clone().unwrap_or_else(model::new_id), title: name, course: self.text(&self.course, cx), kind, day, time, end, done };
+                // The note it came from: kept through edits, set when added from a note.
+                let note = id.as_ref().and_then(|id| self.data.items.iter().find(|x| &x.id == id)).and_then(|x| x.note.clone()).or_else(|| self.form_note.take());
+                let i = Item { id: id.clone().unwrap_or_else(model::new_id), title: name, course: self.text(&self.course, cx), kind, day, time, end, done, note };
                 match id.and_then(|id| self.data.items.iter_mut().find(|x| x.id == id)) { Some(x) => *x = i, None => self.data.items.push(i) }
                 // Show where it went.
                 self.anchor = day; self.mini = None;
@@ -586,14 +613,6 @@ impl SchedulePage {
         })).children(cals)
     }
 
-    fn field(&self, id: &'static str, label: &'static str, f: &Entity<TextField>, window: &Window, cx: &App) -> Div {
-        let h = f.read(cx).focus_handle(cx);
-        div().flex_1().min_w_0().flex().flex_col().gap(px(6.)).child(Label::new(label))
-            .child(Field::new(id).focused(f.read(cx).is_focused(window)).cursor_text()
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| window.focus(&h, cx))
-                .child(div().flex_1().min_w_0().overflow_hidden().child(f.clone())))
-    }
-
     /// The class and item forms, laid out as the event form is: the name written large in place, then a
     /// row each for when, where and what it belongs to, each with its glyph; Delete is quiet red text.
     fn form(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -644,7 +663,7 @@ impl SchedulePage {
                 // The course: its chips to pick from, or a new name typed in.
                 let course = sheet_row("folder").child(div().min_w_0().flex_1().flex().flex_wrap().items_center().gap(px(6.))
                     .children(self.folder_chips(&picked, self.course.clone(), |_, _| {}, cx))
-                    .child(div().w(px(120.)).child(bare("f-icourse", &self.course, window, cx))));
+                    .when(!self.course_choices().iter().any(|(n, _)| n.eq_ignore_ascii_case(&picked)), |d| d.child(div().w(px(120.)).child(bare("f-icourse", &self.course, window, cx)))));
                 let rows = div().flex().flex_col().gap(px(2.)).child(kinds).child(when).child(course)
                     .when(editing, |d| d.child(sheet_row("check").child(div().id("f-done").flex().items_center().gap(px(8.)).cursor_pointer().child(Checkbox::new(*done))
                         .child(div().text_size(px(13.)).text_color(color::foreground()).child("Done"))
@@ -737,6 +756,12 @@ impl SchedulePage {
         let (today, minute, _) = now();
         let now_unix = crate::time::now() as i64;
         let notes = self.links.get(&link.key()).cloned().unwrap_or_default();
+        // A task made from a note: that note, apart from the ones linked to it.
+        let from_note = match &link {
+            Link::Item { id } => self.data.items.iter().find(|i| &i.id == id).and_then(|i| i.note.clone())
+                .and_then(|n| self.notes.iter().find(|(id, _)| *id == n).cloned()),
+            _ => None,
+        };
         // What it is: title, colour, when, whether it is on now, how far off, where, what it belongs to,
         // the folder a new note goes in, the new note's title, and whether it can be edited.
         struct Facts { title: String, accent: Hsla, when: String, on: bool, rel: String, place: String, belongs: String, course: String, note_title: String, editable: bool }
@@ -792,6 +817,11 @@ impl SchedulePage {
             .child(div().mb(px(4.)).flex().items_center().gap(px(6.))
                 .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(color::muted_foreground()).child("Notes"))
                 .when(!notes.is_empty(), |d| d.child(div().text_size(px(12.)).text_color(color::muted_foreground()).child(notes.len().to_string()))))
+            .when_some(from_note, |d, (id, t)| d.child(div().id("det-from").h(px(34.)).px(px(10.)).rounded(px(8.)).flex().items_center().gap(px(10.)).cursor_pointer().hover(|s| s.bg(color::accent()))
+                .child(crate::ui::icon("doc", 15., color::muted_foreground()))
+                .child(div().min_w_0().flex_1().text_size(px(13.)).text_color(color::foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis().child(crate::settings::display_title(&t)))
+                .child(div().flex_none().text_size(px(11.5)).text_color(color::muted_foreground()).child("made here"))
+                .on_click(cx.listener(move |p, _, _, cx| { p.detail = None; cx.emit(ScheduleEvent::Open(id.clone())); cx.notify(); }))))
             .children(notes.iter().enumerate().map(|(k, (id, t))| self.note_row(k, id.clone(), t.clone(), cx)));
         if self.choosing {
             let target = link.clone();
@@ -819,7 +849,7 @@ impl SchedulePage {
                     p.detail = None; cx.emit(ScheduleEvent::NewNote { link: new_link.clone(), title: new_title.clone(), course: new_course.clone() }); cx.notify();
                 })))
                 .child(Button::ghost("det-link").sized(ButtonSize::Sm).icon("ft-link").label("Link a note…").on_click(cx.listener(|p, _, window, cx| {
-                    p.choosing = true; let f = p.find.clone(); f.update(cx, |f, cx| f.set_text("", cx)); window.focus(&f.read(cx).focus_handle(cx), cx); cx.notify();
+                    p.choosing = true; let f = p.find.clone(); f.update(cx, |f, cx| { f.set_text("", cx); f.set_placeholder("Search notes", cx); }); window.focus(&f.read(cx).focus_handle(cx), cx); cx.notify();
                 }))));
         }
         Some(design::scrim().id("det-scrim").occlude()
@@ -856,7 +886,7 @@ impl SchedulePage {
         out
     }
 
-    fn picker_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn picker_sheet(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let note = self.picking.clone()?;
         let (today, minute, _) = now();
         let current = self.notes_link(&note);
@@ -876,9 +906,39 @@ impl SchedulePage {
             .filter_map(|(_, l)| self.describe(&l).map(|(d, a)| (l, d, a)))
             .filter(|(_, d, _)| q.is_empty() || d.title.to_lowercase().contains(&q) || d.sub.to_lowercase().contains(&q))
             .take(40).collect();
-        let close = cx.listener(|p: &mut Self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>| { p.picking = None; cx.notify(); });
         let n = note.clone();
-        let list = div().id("pick-list").max_h(px(320.)).overflow_y_scroll().flex().flex_col()
+        let title = self.notes.iter().find(|(id, _)| *id == note).map(|(_, t)| crate::settings::display_title(t)).unwrap_or_else(|| "This note".into());
+        // Its tasks: what was added from this note, open ones first, soonest first.
+        let mut tasks: Vec<&Item> = self.data.items.iter().filter(|i| i.note.as_deref() == Some(note.as_str())).collect();
+        tasks.sort_by_key(|i| (i.done, i.day, i.time));
+        let label = |s: String| div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(color::muted_foreground()).child(s);
+        let open_count = tasks.iter().filter(|i| !i.done).count();
+        let tasks_box = div().flex().flex_col().gap(px(2.))
+            .child(div().mb(px(2.)).flex().items_center().gap(px(6.)).child(label("Tasks".into()))
+                .when(open_count > 0, |d| d.child(label(open_count.to_string()))))
+            .when(tasks.is_empty(), |d| d.child(div().py(px(4.)).text_size(px(12.5)).text_color(color::muted_foreground()).child("Nothing to do from this note yet.")))
+            .children(tasks.into_iter().enumerate().map(|(k, i)| {
+                let late = !i.done && (i.day < today || (i.day == today && i.time.is_some_and(|t| t < minute)));
+                let c = self.data.color_of(&i.course).map(str::to_string).or_else(|| self.course_choices().into_iter().find(|(n, _)| n.eq_ignore_ascii_case(&i.course)).map(|(_, c)| c)).unwrap_or_else(|| "gray".into());
+                let (tick, edit, kind) = (i.id.clone(), i.id.clone(), i.kind);
+                let due = format!("{}{} · {}", model::day_label(i.day), i.time.map(|t| format!(" {}", model::clock(t))).unwrap_or_default(), model::until((today, minute), (i.day, i.time.unwrap_or(23 * 60 + 59))));
+                div().id(("pick-task", k)).min_h(px(38.)).px(px(8.)).mx(px(-8.)).rounded(px(8.)).flex().items_center().gap(px(10.)).cursor_pointer().hover(|s| s.bg(color::accent_hover()))
+                    .child(div().id(("pick-tick", k)).occlude().child(Checkbox::new(i.done))
+                        .on_click(cx.listener(move |p, _, _, cx| { cx.stop_propagation(); p.toggle_done(&tick, cx); })))
+                    .child(div().min_w_0().flex_1().flex().flex_col()
+                        .child(div().flex().items_center().gap(px(6.))
+                            .child(div().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(if i.done { color::muted_foreground() } else { color::foreground() })
+                                .when(i.done, |d| d.line_through()).overflow_hidden().whitespace_nowrap().text_ellipsis().child(i.title.clone()))
+                            .when(i.kind != Kind::Assignment, |d| d.child(design::Badge::new(i.kind.label()))))
+                        .child(div().flex().items_center().gap(px(6.))
+                            .when(!i.course.is_empty(), |d| d.child(div().size(px(7.)).rounded_full().bg(ink(&c))).child(div().text_size(px(11.5)).text_color(color::muted_foreground()).child(i.course.clone())))
+                            .child(div().text_size(px(11.5)).text_color(if late { now_red() } else { color::muted_foreground() }).child(due))))
+                    .on_click(cx.listener(move |p, _, window, cx| { p.picking = None; p.swap_from_picker(); p.open_item(Some(edit.clone()), kind, window, cx); }))
+            }))
+            .child(div().mt(px(2.)).ml(px(-8.)).flex().items_center().gap(px(4.))
+                .child(Button::ghost("pick-add-task").sized(ButtonSize::Sm).icon("plus").label("Assignment").on_click(cx.listener(|p, _, window, cx| p.add_task(Kind::Assignment, window, cx))))
+                .child(Button::ghost("pick-add-exam").sized(ButtonSize::Sm).icon("plus").label("Exam").on_click(cx.listener(|p, _, window, cx| p.add_task(Kind::Exam, window, cx)))));
+        let list = div().id("pick-list").max_h(px(240.)).overflow_y_scroll().flex().flex_col()
             .when(choices.is_empty(), |d| d.child(div().py(px(8.)).text_size(px(12.5)).text_color(color::muted_foreground())
                 .child(if self.data.classes.is_empty() && self.data.items.is_empty() { "Your schedule is empty. Add classes on the Schedule page first." } else { "Nothing matches." })))
             .children(choices.into_iter().enumerate().map(|(k, (l, d, accent))| {
@@ -889,8 +949,8 @@ impl SchedulePage {
                     Link::Event { id, start } => self.ext_event(id, *start).is_some_and(|e| e.start <= now_unix && now_unix < e.end),
                     Link::Item { .. } => false,
                 };
-                div().id(("pick", k)).h(px(44.)).px(px(10.)).rounded(px(8.)).flex().items_center().gap(px(10.)).cursor_pointer()
-                    .when(on, |d| d.bg(color::muted())).hover(|s| s.bg(color::accent()))
+                div().id(("pick", k)).h(px(42.)).px(px(8.)).mx(px(-8.)).rounded(px(8.)).flex().items_center().gap(px(10.)).cursor_pointer()
+                    .when(on, |d| d.bg(color::accent())).hover(|s| s.bg(color::accent_hover()))
                     .child(div().w(px(3.)).h(px(26.)).rounded_full().bg(accent))
                     .child(div().min_w_0().flex_1().flex().flex_col()
                         .child(div().flex().items_center().gap(px(6.)).child(div().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(color::foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis().child(d.title.clone()))
@@ -899,17 +959,31 @@ impl SchedulePage {
                     .when(on, |d| d.child(crate::ui::icon("check", 15., color::foreground())))
                     .on_click(cx.listener(move |p, _, _, cx| { p.picking = None; cx.emit(ScheduleEvent::Link { note: note.clone(), link: Some(l2.clone()) }); cx.notify(); }))
             }));
+        let h = self.find.read(cx).focus_handle(cx);
+        let search = div().id("pick-find").h(px(32.)).px(px(8.)).rounded(px(7.)).bg(color::accent()).flex().items_center().gap(px(8.)).cursor_text()
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| window.focus(&h, cx))
+            .child(crate::ui::icon("search", 14., color::muted_foreground()))
+            .child(div().flex_1().min_w_0().overflow_hidden().child(self.find.clone()));
+        let linked = div().flex().flex_col().gap(px(6.))
+            .child(label(if current.is_some() { "Linked to".into() } else { "Link to the schedule".into() }))
+            .child(search).child(list);
+        let header = div().flex().items_center().gap(px(10.))
+            .child(div().w(px(18.)).flex_none().flex().justify_center().child(crate::ui::icon("doc", 16., color::muted_foreground())))
+            .child(div().min_w_0().flex_1().text_size(px(20.)).line_height(px(28.)).font_weight(FontWeight::BOLD).text_color(color::foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis().child(title))
+            .child(Button::ghost("pick-close").icon("x").on_click(cx.listener(|p, _, _, cx| { p.picking = None; cx.notify(); })));
         let footer = div().w_full().flex().items_center().gap(px(8.))
-            .when(current.is_some(), |d| d.child(Button::ghost("pick-unlink").sized(ButtonSize::Default).label("Remove link")
+            .when(current.is_some(), |d| d.child(div().id("pick-unlink").px(px(2.)).text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(color::destructive()).cursor_pointer()
+                .hover(|s| s.opacity(0.75)).child("Remove link")
                 .on_click(cx.listener(move |p, _, _, cx| { p.picking = None; cx.emit(ScheduleEvent::Link { note: n.clone(), link: None }); cx.notify(); }))))
             .child(div().flex_1())
-            .child(Button::outline("pick-cancel").label("Cancel").on_click(close));
+            .child(Button::ghost("pick-done").sized(ButtonSize::Sm).label("Done").on_click(cx.listener(|p, _, _, cx| { p.picking = None; cx.notify(); })));
         Some(design::scrim().id("pick-scrim").occlude()
             .on_key_down(cx.listener(|p, ev: &KeyDownEvent, _, cx| if ev.keystroke.key == "escape" { p.picking = None; cx.stop_propagation(); cx.notify(); }))
-            .child(design::Dialog::new("pick").w(px(460.)).title("Link to the schedule").description("Which lecture, assignment, exam or calendar event was this note for?")
-                .closable(cx.listener(|p, _, _, cx| { p.picking = None; cx.notify(); }))
-                .child(div().flex().flex_col().gap(px(8.)).child(self.field("pick-find", "Search", &self.find, window, cx)).child(list))
-                .footer(footer))
+            .child(sheet("pick").child(header).child(div().h(px(2.))).child(tasks_box)
+                .child(div().h(px(6.))).child(div().h(px(1.)).bg(color::border()).mx(px(-24.))).child(div().h(px(6.)))
+                .child(linked)
+                .child(div().h(px(6.))).child(div().h(px(1.)).bg(color::border()).mx(px(-24.))).child(div().h(px(8.)))
+                .child(footer))
             .into_any_element())
     }
 
@@ -973,10 +1047,6 @@ impl SchedulePage {
         if out.is_none() { self.leaving = None; }
         out
     }
-
-    /// The page left the window (a note opened from a card): a sheet closed meanwhile does not
-    /// play its leaving when the page comes back.
-    pub fn forget_sheet(&mut self) { self.shown = None; self.leaving = None; self.sheet_since = None; }
 
     fn sheet(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         self.form(window, cx).or_else(|| self.ext_form_view(window, cx)).or_else(|| self.details(window, cx))

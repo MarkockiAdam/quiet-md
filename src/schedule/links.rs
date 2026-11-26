@@ -106,11 +106,34 @@ impl Workspace {
     /// The header's calendar button: 关联到课表 for the open note.
     pub(crate) fn calendar_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         crate::ui::header_icon("doc-calendar", "calendar")
-            .tip(crate::settings::tr("关联到课表", "Link to the schedule"), None)
-            .on_click(cx.listener(|w, _, window, cx| {
-                let Some(id) = w.current.clone() else { return };
-                w.push_schedule_links(cx);
-                w.schedule.update(cx, |s, cx| s.pick_for(id, window, cx));
-            }))
+            .tip(crate::settings::tr("课表与作业", "Tasks and schedule"), None)
+            .on_click(cx.listener(|w, _, window, cx| w.open_note_schedule(window, cx)))
+    }
+
+    /// The open note's schedule sheet: its tasks, what it is linked to. A task added there takes the
+    /// note's folder as its course (when the note sits in one below the library's top).
+    fn open_note_schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.current.clone() else { return };
+        let course = self.entries.iter().find(|e| e.id == id).and_then(|e| e.meta.parent.clone())
+            .filter(|p| crate::shared_store::top_of_row(p).is_none())
+            .and_then(|p| self.entries.iter().find(|e| e.id == p).map(|e| e.title.trim().to_string()))
+            .unwrap_or_default();
+        self.push_schedule_links(cx);
+        self.schedule.update(cx, |s, cx| s.pick_for(id, course, window, cx));
+    }
+
+    /// The open note's tasks still to do, as a pill for its header: a click opens its schedule sheet.
+    pub(crate) fn tasks_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let id = self.current.as_ref()?;
+        let n = self.schedule.read(cx).data.items.iter().filter(|i| !i.done && i.note.as_deref() == Some(id.as_str())).count();
+        if n == 0 { return None }
+        let ink = crate::design::color::foreground();
+        Some(div().id("tasks-pill").no_drag().flex_none().h(px(24.)).px(px(9.)).rounded_full().bg(crate::design::color::accent())
+            .flex().items_center().gap(px(6.)).cursor_pointer().hover(|s| s.opacity(0.85))
+            .child(crate::ui::icon("list-todo", 13., ink))
+            .child(div().text_size(px(12.)).font_weight(FontWeight::MEDIUM).text_color(ink).whitespace_nowrap().child(format!("{n} to do")))
+            .tip(crate::settings::tr("这篇笔记的作业", "Tasks from this note"), None)
+            .on_click(cx.listener(|w, _, window, cx| w.open_note_schedule(window, cx)))
+            .into_any_element())
     }
 }

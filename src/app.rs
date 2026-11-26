@@ -2011,6 +2011,7 @@ impl Workspace {
                     )
                     // 课表 (fork): what this note was taken for.
                     .children(self.calendar_chip(cx))
+                    .children(self.tasks_pill(cx))
                     .when_some(save_error, |d, error| d.child(
                         div().id("save-status-error").when(self.unsaved, |d| d.cursor_pointer().on_click(cx.listener(|w, _, _, cx| { w.confirm = Some(Confirm::SaveFailed); cx.notify(); }))).min_w_0().max_w(px(220.)).text_size(px(12.)).line_height(px(18.))
                             .text_color(theme::c(craft::R400)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(error),
@@ -2183,7 +2184,9 @@ impl Render for Workspace {
         // 关联到课表, opened from a note's header (fork).
         let schedule_picker = self.schedule.update(cx, |s, cx| s.picker(window, cx));
         // 课表's forms and cards: over the whole window, centred, on the blurred meadow (fork).
-        let schedule_sheet = if self.view == View::Schedule { self.schedule.update(cx, |s, cx| s.overlay(window, cx)) } else { self.schedule.update(cx, |s, _| s.forget_sheet()); None };
+        // Drawn over any page: a task added from a note opens its form over the note, and a sheet left
+        // for a note (a card's linked note) leaves over it.
+        let schedule_sheet = self.schedule.update(cx, |s, cx| s.overlay(window, cx));
         let export_md = self.render_export_md(cx);
         let import_apps = self.render_import_apps(cx);
         // Only the note stands out: a white plane flush with the window's top,

@@ -61,6 +61,9 @@ pub struct Item {
     /// When it ends (exams, events); None: a moment (a deadline) or the whole day.
     pub end: Option<Minute>,
     pub done: bool,
+    /// The note it was made from (its id), when it was added from a note.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// The local day, minute and weekday of unix seconds.
