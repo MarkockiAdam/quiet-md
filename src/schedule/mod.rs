@@ -40,6 +40,8 @@ const PANEL_MIN_WINDOW: f32 = 1080.;
 const OVERDUE_DAYS: i64 = 14;
 /// A timed exam or event without an end takes this long in the grid.
 const DEFAULT_LEN: Minute = 60;
+/// How many all-day items a day shows while the row is folded.
+const ALL_DAY_SHOWN: usize = 3;
 /// Opening, the grid shows the time now this far below its top.
 const LEAD_HOURS: f32 = 1.5;
 
@@ -92,6 +94,8 @@ pub struct SchedulePage {
     /// The same for 关联到课表: the note it was for.
     last_pick: Option<String>,
     pick_leaving: Option<(web_time::Instant, String)>,
+    /// The all-day row shows everything (else at most `ALL_DAY_SHOWN` a day, and how many more).
+    all_day_open: bool,
     /// The grid was brought to the time now (on opening, and on 今天).
     placed: bool,
     name: Entity<TextField>,
@@ -154,7 +158,7 @@ impl SchedulePage {
         log::info!("calendars: access at start {:?}", calendars::access());
         SchedulePage {
             data: model::load(), anchor: now().0, days: 7, mini: None, add_menu: false, form: None, error: None,
-            scroll: ScrollHandle::new(), placed: false, links: HashMap::new(), notes: vec![], folders: vec![], detail: None, choosing: false, picking: None, find, ext: Default::default(), sheet_since: None, pick_since: None, form_note: None, pick_course: String::new(), shown: None, leaving: None, last_pick: None, pick_leaving: None,
+            scroll: ScrollHandle::new(), placed: false, links: HashMap::new(), notes: vec![], folders: vec![], detail: None, choosing: false, picking: None, find, ext: Default::default(), sheet_since: None, pick_since: None, all_day_open: false, form_note: None, pick_course: String::new(), shown: None, leaving: None, last_pick: None, pick_leaving: None,
             name, kind, place, start, end, course, date, time, until, x_title, x_place, _subs: subs,
         }
     }
@@ -410,23 +414,45 @@ impl SchedulePage {
                         .when(!is_today, |d| d.text_color(color::foreground()))
                         .child(dd.to_string()))
             }));
+        // Each day's all-day chips: deadlines and untimed items, then the calendars' all-day events.
+        let mut per_day: Vec<Vec<AnyElement>> = vec![];
+        for k in 0..self.days as i64 {
+            let d = first + k;
+            let mut chips: Vec<AnyElement> = self.all_day_on(d).into_iter().map(|i| {
+                let c = self.data.color_of(&i.course).unwrap_or(if i.kind == Kind::Exam { "red" } else { "gray" }).to_string();
+                let id = i.id.clone();
+                div().id(SharedString::from(format!("allday-{}", i.id))).h(px(20.)).px(px(6.)).rounded(px(5.)).bg(wash(&c)).cursor_pointer()
+                    .flex().items_center().gap(px(5.)).overflow_hidden().hover(|s| s.opacity(0.85))
+                    .when(i.done, |d| d.opacity(0.5))
+                    .child(div().size(px(6.)).flex_none().rounded_full().bg(ink(&c)))
+                    .child(div().min_w_0().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(color::foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis()
+                        .when(i.done, |d| d.line_through()).child(i.title.clone()))
+                    .when_some(i.time.filter(|_| wide), |d, t| d.child(div().flex_none().text_size(px(10.5)).text_color(color::muted_foreground()).child(model::clock(t))))
+                    .on_click(cx.listener(move |p, _, _, cx| p.open_detail(Link::Item { id: id.clone() }, cx)))
+                    .into_any_element()
+            }).collect();
+            chips.extend(self.ext_all_day(d).into_iter().map(|e| self.ext_chip(e, cx).into_any_element()).collect::<Vec<_>>());
+            per_day.push(chips);
+        }
+        // Folded, a busy day shows its first few and how many more; a click on that opens the row.
+        let overflows = per_day.iter().any(|c| c.len() > ALL_DAY_SHOWN);
+        let open = self.all_day_open;
+        let chevron = overflows || open;
         let all_day = any_all_day.then(|| div().flex().border_t_1().border_color(color::border()).py(px(4.))
-            .child(div().w(px(GUTTER_W)).flex_none().pr(px(10.)).pt(px(3.)).flex().justify_end().text_size(px(10.5)).text_color(color::muted_foreground()).child("all-day"))
-            .children((0..self.days as i64).map(|k| {
-                let d = first + k;
-                div().flex_1().min_w_0().px(px(3.)).flex().flex_col().gap(px(2.)).children(self.all_day_on(d).into_iter().map(|i| {
-                    let c = self.data.color_of(&i.course).unwrap_or(if i.kind == Kind::Exam { "red" } else { "gray" }).to_string();
-                    let id = i.id.clone();
-                    let kind = i.kind;
-                    div().id(SharedString::from(format!("allday-{}", i.id))).h(px(20.)).px(px(6.)).rounded(px(5.)).bg(wash(&c)).cursor_pointer()
-                        .flex().items_center().gap(px(5.)).overflow_hidden().hover(|s| s.opacity(0.85))
-                        .when(i.done, |d| d.opacity(0.5))
-                        .child(div().size(px(6.)).flex_none().rounded_full().bg(ink(&c)))
-                        .child(div().min_w_0().text_size(px(11.5)).font_weight(FontWeight::MEDIUM).text_color(color::foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis()
-                            .when(i.done, |d| d.line_through()).child(i.title.clone()))
-                        .when_some(i.time.filter(|_| wide), |d, t| d.child(div().flex_none().text_size(px(10.5)).text_color(color::muted_foreground()).child(model::clock(t))))
-                        .on_click(cx.listener(move |p, _, _, cx| { let _ = kind; p.open_detail(Link::Item { id: id.clone() }, cx) }))
-                })).children(self.ext_all_day(d).into_iter().map(|e| self.ext_chip(e, cx)).collect::<Vec<_>>())
+            .child(div().id("allday-toggle").w(px(GUTTER_W)).flex_none().pr(px(8.)).pt(px(3.)).flex().items_start().justify_end().gap(px(2.))
+                .text_size(px(10.5)).text_color(color::muted_foreground())
+                .when(chevron, |d| d.cursor_pointer().hover(|s| s.text_color(color::foreground()))
+                    .on_click(cx.listener(|p, _, _, cx| { p.all_day_open = !p.all_day_open; cx.notify(); })))
+                .child("all-day")
+                .when(chevron, |d| d.child(crate::ui::icon(if open { "chevron-down" } else { "chevron-right" }, 11., color::muted_foreground()))))
+            .children(per_day.into_iter().enumerate().map(|(k, chips)| {
+                let more = chips.len().saturating_sub(ALL_DAY_SHOWN);
+                let shown: Vec<AnyElement> = if open { chips } else { chips.into_iter().take(ALL_DAY_SHOWN).collect() };
+                div().flex_1().min_w_0().px(px(3.)).flex().flex_col().gap(px(2.)).children(shown)
+                    .when(!open && more > 0, |d| d.child(div().id(("allday-more", k)).h(px(18.)).px(px(6.)).rounded(px(5.)).flex().items_center().cursor_pointer()
+                        .text_size(px(11.)).font_weight(FontWeight::MEDIUM).text_color(color::muted_foreground()).hover(|s| s.bg(color::accent_hover()).text_color(color::foreground()))
+                        .child(format!("+{more} more"))
+                        .on_click(cx.listener(|p, _, _, cx| { p.all_day_open = true; cx.notify(); }))))
             })));
         div().flex_none().flex().flex_col().border_b_1().border_color(color::border()).child(heads).children(all_day)
     }
