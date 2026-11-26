@@ -7,7 +7,6 @@
 use super::model::Link;
 use super::ScheduleEvent;
 use crate::app::{View, Workspace};
-use crate::design::color;
 use crate::ui::{TipExt, TitleBarExt};
 use gpui::*;
 use std::collections::HashMap;
@@ -75,8 +74,7 @@ impl Workspace {
         let id = self.current.as_ref()?;
         let key = self.entries.iter().find(|e| &e.id == id)?.meta.event.clone()?;
         let link = Link::parse(&key)?;
-        let d = self.schedule.read(cx).data.describe(&link)?;
-        let ink = crate::theme::text_color(&d.color).unwrap_or_else(color::muted_foreground);
+        let (d, ink) = self.schedule.read(cx).describe(&link)?;
         let day = d.day;
         Some(div().id("cal-chip").no_drag().flex_none().h(px(24.)).px(px(9.)).rounded_full().bg(ink.opacity(if crate::theme::dark() { 0.24 } else { 0.12 }))
             .flex().items_center().gap(px(6.)).cursor_pointer().hover(|s| s.opacity(0.85))

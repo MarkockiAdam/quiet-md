@@ -5,6 +5,8 @@
 //! what is due. The sidebar's card says the same in two lines. The data lives in `model.rs`; this
 //! is its page, its own entity so the workspace only hosts it.
 
+pub mod calendars;
+mod external;
 pub mod links;
 pub mod model;
 
@@ -69,6 +71,8 @@ pub struct SchedulePage {
     /// 关联到课表 open for this note (from the note's header).
     picking: Option<String>,
     find: Entity<TextField>,
+    /// Google, iCloud …: the calendars of this Mac (`external`).
+    ext: external::Ext,
     /// The grid was brought to the time now (on opening, and on 今天).
     placed: bool,
     name: Entity<TextField>,
@@ -93,7 +97,7 @@ fn wash(c: &str) -> Hsla { ink(c).opacity(if crate::theme::dark() { 0.26 } else 
 fn now_red() -> Hsla { color::destructive() }
 
 /// One thing drawn in the grid.
-struct Block { key: String, start: Minute, end: Minute, title: String, sub: String, color: String, class: bool, done: bool }
+struct Block { link: Link, start: Minute, end: Minute, title: String, sub: String, accent: Hsla, fill: Hsla, done: bool }
 
 impl SchedulePage {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -105,6 +109,7 @@ impl SchedulePage {
         subs.push(cx.subscribe(&find, |_: &mut Self, _, _: &TextFieldEvent, cx| cx.notify()));
         for f in [&name, &kind, &place, &start, &end, &course, &date, &time, &until] {
             subs.push(cx.subscribe(f, |p: &mut Self, _, ev: &TextFieldEvent, cx| match ev {
+                TextFieldEvent::Submit if p.ext.form.is_some() => p.save_ext_form(cx),
                 TextFieldEvent::Submit if p.form.is_none() => {}
                 TextFieldEvent::Submit => p.save_form(cx),
                 TextFieldEvent::Changed => { p.error = None; cx.notify(); }
@@ -117,16 +122,20 @@ impl SchedulePage {
             cx.background_executor().timer(Duration::from_secs(30)).await;
             if this.update(cx, |_, cx| cx.notify()).is_err() { break }
         }).detach();
+        log::info!("calendars: access at start {:?}", calendars::access());
         SchedulePage {
             data: model::load(), anchor: now().0, days: 7, mini: None, add_menu: false, form: None, error: None,
-            scroll: ScrollHandle::new(), placed: false, links: HashMap::new(), notes: vec![], detail: None, choosing: false, picking: None, find,
+            scroll: ScrollHandle::new(), placed: false, links: HashMap::new(), notes: vec![], detail: None, choosing: false, picking: None, find, ext: Default::default(),
             name, kind, place, start, end, course, date, time, until, _subs: subs,
         }
     }
 
     /// The window came forward: what another window or device wrote meanwhile (not while a form is open).
     pub fn reload(&mut self, cx: &mut Context<Self>) {
-        if self.form.is_some() { return }
+        if self.form.is_some() || self.ext.form.is_some() { return }
+        // Google and iCloud may have changed meanwhile.
+        self.ext_refresh(true);
+        cx.notify();
         let d = model::load();
         if d != self.data { self.data = d; cx.notify(); }
     }
@@ -149,6 +158,7 @@ impl SchedulePage {
     pub fn pick_for(&mut self, note: String, window: &mut Window, cx: &mut Context<Self>) {
         self.picking = Some(note);
         self.data = model::load();
+        self.read_around(now().0);
         let f = self.find.clone(); f.update(cx, |f, cx| f.set_text("", cx));
         window.focus(&f.read(cx).focus_handle(cx), cx);
         cx.notify();
@@ -278,7 +288,10 @@ impl SchedulePage {
             .child(add("sch-new-class", "calendar", "Class").on_click(cx.listener(|p, _, window, cx| p.open_class(None, model::weekday_of(p.anchor), None, window, cx))))
             .child(add("sch-new-assignment", "square-pen", "Assignment").on_click(cx.listener(|p, _, window, cx| p.open_item(None, Kind::Assignment, window, cx))))
             .child(add("sch-new-exam", "star", "Exam").on_click(cx.listener(|p, _, window, cx| p.open_item(None, Kind::Exam, window, cx))))
-            .child(add("sch-new-event", "plus", "Event").on_click(cx.listener(|p, _, window, cx| p.open_item(None, Kind::Event, window, cx))));
+            .child(add("sch-new-event", "plus", "Event").on_click(cx.listener(|p, _, window, cx| p.open_item(None, Kind::Event, window, cx))))
+            // An event in Google or iCloud, when a calendar of this Mac takes one.
+            .when(!self.writable_calendars().is_empty(), |m| m.child(MenuItem::new("sch-new-ext").icon("globe").label("Calendar event")
+                .description("In Google or iCloud").on_click(cx.listener(|p, _, window, cx| { let d = p.anchor; p.open_ext_form(None, d, None, window, cx) }))));
         // The page header puts a spacer after its title (`page_header_with`): this row takes all the room.
         let mut bar = div().flex_1().min_w_0().h_full().flex().items_center().gap(px(6.));
         bar.style().flex_grow = Some(1000.);
@@ -302,13 +315,16 @@ impl SchedulePage {
     /// What one day of the grid draws: its classes, and the exams and events that have a time.
     fn blocks_on(&self, d: Day) -> Vec<Block> {
         let mut v: Vec<Block> = self.data.classes_on(model::weekday_of(d)).into_iter().map(|c| Block {
-            key: c.id.clone(), start: c.start, end: c.end, title: c.course.clone(), sub: join(&[&c.kind, &c.place]), color: c.color.clone(), class: true, done: false,
+            link: Link::Class { id: c.id.clone(), day: d }, start: c.start, end: c.end, title: c.course.clone(), sub: join(&[&c.kind, &c.place]), accent: ink(&c.color), fill: wash(&c.color), done: false,
         }).collect();
         v.extend(self.data.items_on(d).into_iter().filter(|i| i.time.is_some() && i.kind != Kind::Assignment).map(|i| {
             let s = i.time.unwrap_or(0);
-            Block { key: i.id.clone(), start: s, end: i.end.unwrap_or((s + DEFAULT_LEN).min(24 * 60)), title: i.title.clone(), sub: join(&[&i.kind.label().to_string(), &i.course]),
-                color: self.data.color_of(&i.course).unwrap_or(if i.kind == Kind::Exam { "red" } else { "gray" }).into(), class: false, done: i.done }
+            let c = self.data.color_of(&i.course).unwrap_or(if i.kind == Kind::Exam { "red" } else { "gray" });
+            Block { link: Link::Item { id: i.id.clone() }, start: s, end: i.end.unwrap_or((s + DEFAULT_LEN).min(24 * 60)), title: i.title.clone(), sub: join(&[&i.kind.label().to_string(), &i.course]),
+                accent: ink(c), fill: wash(c), done: i.done }
         }));
+        // Google, iCloud …: the calendars of this Mac (`external`).
+        v.extend(self.ext_blocks(d));
         v
     }
 
@@ -320,7 +336,7 @@ impl SchedulePage {
     fn day_heads(&self, today: Day, cx: &mut Context<Self>) -> Div {
         let first = self.first_day();
         let wide = self.days == 1;
-        let any_all_day = (0..self.days as i64).any(|k| !self.all_day_on(first + k).is_empty());
+        let any_all_day = (0..self.days as i64).any(|k| !self.all_day_on(first + k).is_empty() || !self.ext_all_day(first + k).is_empty());
         let heads = div().flex().child(div().w(px(GUTTER_W)).flex_none())
             .children((0..self.days as i64).map(|k| {
                 let d = first + k;
@@ -354,7 +370,7 @@ impl SchedulePage {
                             .when(i.done, |d| d.line_through()).child(i.title.clone()))
                         .when_some(i.time.filter(|_| wide), |d, t| d.child(div().flex_none().text_size(px(10.5)).text_color(color::muted_foreground()).child(model::clock(t))))
                         .on_click(cx.listener(move |p, _, _, cx| { let _ = kind; p.open_detail(Link::Item { id: id.clone() }, cx) }))
-                }))
+                })).children(self.ext_all_day(d).into_iter().map(|e| self.ext_chip(e, cx)).collect::<Vec<_>>())
             })));
         div().flex_none().flex().flex_col().border_b_1().border_color(color::border()).child(heads).children(all_day)
     }
@@ -399,11 +415,11 @@ impl SchedulePage {
                     let height = ((b.end - b.start) as f32 / 60. * HOUR_H).max(22.);
                     let over = past_day || (d == today && b.end <= minute);
                     let on = d == today && b.start <= minute && minute < b.end;
-                    let (key, class) = (b.key.clone(), b.class);
-                    let noted = self.links.contains_key(&if class { Link::Class { id: key.clone(), day: d } } else { Link::Item { id: key.clone() } }.key());
+                    let link = b.link.clone();
+                    let noted = self.links.contains_key(&link.key());
                     let w = 1. / n as f32;
-                    let (accent, fill) = (ink(&b.color), wash(&b.color));
-                    div().id(SharedString::from(format!("blk-{}", b.key))).occlude().absolute().top(px(top + 1.)).h(px(height - 2.))
+                    let (accent, fill) = (b.accent, b.fill);
+                    div().id(SharedString::from(format!("blk-{}", link.key()))).occlude().absolute().top(px(top + 1.)).h(px(height - 2.))
                         .left(relative(c as f32 * w)).w(relative(w)).pl(px(2.)).pr(px(3.))
                         .child(div().size_full().rounded(px(7.)).bg(fill).border_l(px(3.)).border_color(accent).pl(px(7.)).pr(px(6.)).py(px(4.))
                             .overflow_hidden().cursor_pointer().flex().flex_col().gap(px(1.))
@@ -416,7 +432,7 @@ impl SchedulePage {
                                 .child(model::clock(b.start))))
                             .when(height > 54. && !b.sub.is_empty(), |d| d.child(div().text_size(px(11.)).line_height(px(14.)).text_color(color::muted_foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis().child(b.sub))))
                         .when(noted, |d| d.child(div().absolute().top(px(5.)).right(px(7.)).child(crate::ui::icon("doc", 11., accent))))
-                        .on_click(cx.listener(move |p, _, _, cx| p.open_detail(if class { Link::Class { id: key.clone(), day: d } } else { Link::Item { id: key.clone() } }, cx)))
+                        .on_click(cx.listener(move |p, _, _, cx| p.open_detail(link.clone(), cx)))
                 }))
                 // The time now: a red line with a dot where it meets the day.
                 .when(d == today, |col| {
@@ -473,11 +489,13 @@ impl SchedulePage {
         let nn = self.data.now_next(today, minute);
         let mut p = div().p(px(20.)).pt(px(8.)).flex().flex_col().child(self.mini_month(today, cx));
         if self.data.classes.is_empty() && self.data.items.is_empty() {
+            let cals = self.calendars_section(cx);
             return p.child(heading("Your week is clear"))
                 .child(muted("Add your timetable once and it repeats every week. Click any hour in the grid, or use New.".into()))
                 .child(div().mt(px(12.)).flex().gap(px(8.))
                     .child(Button::primary("empty-class").sized(ButtonSize::Sm).icon("plus").label("Add a class").on_click(cx.listener(|p, _, window, cx| p.open_class(None, model::weekday_of(p.anchor), None, window, cx))))
-                    .child(Button::outline("empty-item").sized(ButtonSize::Sm).label("Add a deadline").on_click(cx.listener(|p, _, window, cx| p.open_item(None, Kind::Assignment, window, cx)))));
+                    .child(Button::outline("empty-item").sized(ButtonSize::Sm).label("Add a deadline").on_click(cx.listener(|p, _, window, cx| p.open_item(None, Kind::Assignment, window, cx)))))
+                .children(cals);
         }
         // Up next: one card, with how far through the class is when it is on.
         let card = |c: &Class, label: String, sub: String, progress: Option<f32>| div().p(px(14.)).rounded(px(12.)).bg(wash(&c.color)).flex().flex_col().gap(px(3.))
@@ -517,6 +535,7 @@ impl SchedulePage {
         let due = self.data.upcoming(today, OVERDUE_DAYS);
         p = p.child(heading("Due"));
         if due.is_empty() { p = p.child(muted("Nothing due. Nice.".into())); }
+        let cals = self.calendars_section(cx);
         p.children(due.into_iter().take(12).map(|i| {
             let late = i.day < today || (i.day == today && i.time.is_some_and(|t| t < minute));
             let c = self.data.color_of(&i.course).unwrap_or("gray").to_string();
@@ -535,7 +554,7 @@ impl SchedulePage {
                         .when(!i.course.is_empty(), |d| d.child(div().size(px(7.)).flex_none().rounded_full().bg(ink(&c))).child(div().text_size(px(11.5)).text_color(color::muted_foreground()).child(i.course.clone())))
                         .child(div().text_size(px(11.5)).font_weight(if late { FontWeight::SEMIBOLD } else { FontWeight::NORMAL }).text_color(if late { now_red() } else { color::muted_foreground() })
                             .child(format!("{}{} · {left}", model::day_label(i.day), i.time.map(|t| format!(" {}", model::clock(t))).unwrap_or_default())))))
-        }))
+        })).children(cals)
     }
 
     fn field(&self, id: &'static str, label: &'static str, f: &Entity<TextField>, window: &Window, cx: &App) -> Div {
@@ -635,34 +654,46 @@ impl SchedulePage {
         self.notes.iter().filter(|(id, t)| !skip.iter().any(|(s, _)| s == id) && (q.is_empty() || t.to_lowercase().contains(&q))).take(limit).cloned().collect()
     }
 
-    /// The details card of a lecture or item: when and where, its notes, and what to do with them.
+    /// The details card of a lecture, an item or a calendar event: when and where, its notes, and what
+    /// to do with them.
     fn details(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let link = self.detail.clone()?;
-        let d = self.data.describe(&link)?;
         let (today, minute, _) = now();
         let notes = self.links.get(&link.key()).cloned().unwrap_or_default();
-        let (when, place, course) = match &link {
+        // (title, colour, the line under it, the folder a new note goes in, the new note's title, the event to edit)
+        let (title, accent, line, course, note_title, event) = match &link {
             Link::Class { id, day } => {
                 let c = self.data.classes.iter().find(|c| &c.id == id)?;
-                (format!("{} · {} – {}", model::day_label(*day), model::clock(c.start), model::clock(c.end)), c.place.clone(), c.course.clone())
+                let on = *day == today && c.start <= minute && minute < c.end;
+                let rel = if on { "on now".to_string() } else { model::until((today, minute), (*day, c.start)) };
+                let when = format!("{} · {} – {}", model::day_label(*day), model::clock(c.start), model::clock(c.end));
+                (c.course.clone(), ink(&c.color), join(&[&c.kind, &when, &c.place, &rel]), c.course.clone(), format!("{} – {}", c.course, model::day_label(*day)), None)
             }
             Link::Item { id } => {
                 let i = self.data.items.iter().find(|i| &i.id == id)?;
                 let t = match (i.time, i.end) { (Some(s), Some(e)) => format!(" · {} – {}", model::clock(s), model::clock(e)), (Some(s), None) => format!(" · {}", model::clock(s)), _ => String::new() };
-                (format!("{}{t}", model::day_label(i.day)), String::new(), i.course.clone())
+                let c = self.data.color_of(&i.course).unwrap_or(if i.kind == Kind::Exam { "red" } else { "gray" });
+                let rel = model::until((today, minute), (i.day, i.time.unwrap_or(0)));
+                (i.title.clone(), ink(c), join(&[&i.kind.label().to_string(), &format!("{}{t}", model::day_label(i.day)), &rel]), i.course.clone(), i.title.clone(), None)
+            }
+            Link::Event { id, start } => {
+                let e = self.ext_event(id, *start)?;
+                let (accent, d0) = (self.ext_describe(id, *start).map(|(_, a)| a).unwrap_or_else(color::muted_foreground), model::local(e.start as u64).0);
+                let rel = if e.start <= crate::time::now() as i64 && (crate::time::now() as i64) < e.end { "on now".to_string() } else { model::until((today, minute), (d0, model::local(e.start as u64).1)) };
+                (e.title.clone(), accent, join(&[&self.ext_calendar_title(&e), &Self::ext_when(&e), &e.location, &rel]), String::new(), format!("{} – {}", e.title, model::day_label(d0)), Some(e))
             }
         };
-        let on = matches!(&link, Link::Class { id, day } if *day == today && self.data.classes.iter().any(|c| &c.id == id && c.start <= minute && minute < c.end));
-        let relative = if on { "on now".to_string() } else { model::until((today, minute), (d.day, d.start.unwrap_or(0))) };
-        let title = match &link { Link::Class { day, .. } => format!("{} – {}", d.title, model::day_label(*day)), Link::Item { .. } => d.title.clone() };
+        let d = model::Described { title, sub: line, color: String::new(), day: 0, start: None };
+        let title = note_title;
+        let editable = event.as_ref().is_none_or(|e| self.ext_writable(e));
         let (new_link, new_title, new_course) = (link.clone(), title.clone(), course.clone());
         let edit = link.clone();
         let mut body = div().flex().flex_col().gap(px(4.))
             .child(div().flex().items_center().gap(px(10.))
-                .child(div().w(px(4.)).h(px(40.)).rounded_full().bg(ink(&d.color)))
-                .child(div().flex().flex_col()
+                .child(div().w(px(4.)).h(px(40.)).rounded_full().bg(accent))
+                .child(div().min_w_0().flex().flex_col()
                     .child(div().text_size(px(19.)).line_height(px(24.)).font_weight(FontWeight::BOLD).text_color(color::foreground()).child(d.title.clone()))
-                    .child(div().text_size(px(12.5)).text_color(color::muted_foreground()).child(join(&[&d.sub.split(" · ").next().unwrap_or("").to_string(), &when, &place, &relative])))))
+                    .child(div().text_size(px(12.5)).text_color(color::muted_foreground()).child(d.sub.clone()))))
             .child(div().mt(px(14.)).mb(px(4.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(color::muted_foreground()).child("Notes"));
         if notes.is_empty() && !self.choosing {
             body = body.child(div().text_size(px(12.5)).text_color(color::muted_foreground()).child("No notes yet. Make one for this, or link one you already have."));
@@ -682,8 +713,13 @@ impl SchedulePage {
                     }))));
         }
         let footer = div().w_full().flex().items_center().gap(px(8.))
-            .child(Button::ghost("det-edit").sized(ButtonSize::Default).icon("square-pen").label("Edit")
-                .on_click(cx.listener(move |p, _, window, cx| { p.detail = None; match &edit { Link::Class { id, day } => p.open_class(Some(id.clone()), model::weekday_of(*day), None, window, cx), Link::Item { id } => p.open_item(Some(id.clone()), Kind::Event, window, cx) } })))
+            .when(editable, |d| d.child(Button::ghost("det-edit").sized(ButtonSize::Default).icon("square-pen").label("Edit")
+                .on_click(cx.listener(move |p, _, window, cx| { p.detail = None; match &edit {
+                    Link::Class { id, day } => p.open_class(Some(id.clone()), model::weekday_of(*day), None, window, cx),
+                    Link::Item { id } => p.open_item(Some(id.clone()), Kind::Event, window, cx),
+                    Link::Event { id, start } => { let e = p.ext_event(id, *start); let day = now().0; p.open_ext_form(e, day, None, window, cx) }
+                } }))))
+            .when(!editable, |d| d.child(div().text_size(px(12.)).text_color(color::muted_foreground()).child("Read-only calendar")))
             .child(div().flex_1())
             .when(!self.choosing, |d| d.child(Button::outline("det-link").label("Link a note").on_click(cx.listener(|p, _, window, cx| {
                 p.choosing = true; let f = p.find.clone(); f.update(cx, |f, cx| f.set_text("", cx)); window.focus(&f.read(cx).focus_handle(cx), cx); cx.notify();
@@ -706,24 +742,39 @@ impl SchedulePage {
         let (today, minute, _) = now();
         let current = self.notes_link(&note);
         let q = self.find.read(cx).text.trim().to_lowercase();
-        let choices: Vec<(Link, model::Described)> = self.data.link_choices(today, minute, 14).into_iter()
-            .filter_map(|l| self.data.describe(&l).map(|d| (l, d)))
-            .filter(|(_, d)| q.is_empty() || d.title.to_lowercase().contains(&q) || d.sub.to_lowercase().contains(&q))
-            .take(30).collect();
+        // Lectures and calendar events by how near now they are (the one on now first), then what is due.
+        let now_unix = crate::time::now() as i64;
+        let mut near: Vec<(i64, Link)> = self.data.link_choices(today, minute, 14).into_iter().map(|l| (match &l {
+            Link::Class { id, day } => self.data.classes.iter().find(|c| &c.id == id).map_or(i64::MAX, |c| {
+                let (s, e) = (external::unix_of(*day, c.start), external::unix_of(*day, c.end));
+                if s <= now_unix && now_unix < e { -1 } else { (s - now_unix).abs() / 60 }
+            }),
+            _ => i64::MAX,
+        }, l)).collect();
+        near.extend(self.ext_choices());
+        near.sort_by_key(|(d, _)| *d);
+        let choices: Vec<(Link, model::Described, Hsla)> = near.into_iter()
+            .filter_map(|(_, l)| self.describe(&l).map(|(d, a)| (l, d, a)))
+            .filter(|(_, d, _)| q.is_empty() || d.title.to_lowercase().contains(&q) || d.sub.to_lowercase().contains(&q))
+            .take(40).collect();
         let close = cx.listener(|p: &mut Self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>| { p.picking = None; cx.notify(); });
         let n = note.clone();
         let list = div().id("pick-list").max_h(px(320.)).overflow_y_scroll().flex().flex_col()
             .when(choices.is_empty(), |d| d.child(div().py(px(8.)).text_size(px(12.5)).text_color(color::muted_foreground())
                 .child(if self.data.classes.is_empty() && self.data.items.is_empty() { "Your schedule is empty. Add classes on the Schedule page first." } else { "Nothing matches." })))
-            .children(choices.into_iter().enumerate().map(|(k, (l, d))| {
+            .children(choices.into_iter().enumerate().map(|(k, (l, d, accent))| {
                 let on = current.as_ref() == Some(&l);
                 let (note, l2) = (note.clone(), l.clone());
-                let is_now = matches!(&l, Link::Class { day, .. } if *day == today) && self.data.now_next(today, minute).now.is_some_and(|c| matches!(&l, Link::Class { id, .. } if *id == c.id));
+                let is_now = match &l {
+                    Link::Class { id, day } => *day == today && self.data.now_next(today, minute).now.is_some_and(|c| *id == c.id),
+                    Link::Event { id, start } => self.ext_event(id, *start).is_some_and(|e| e.start <= now_unix && now_unix < e.end),
+                    Link::Item { .. } => false,
+                };
                 div().id(("pick", k)).h(px(44.)).px(px(10.)).rounded(px(8.)).flex().items_center().gap(px(10.)).cursor_pointer()
                     .when(on, |d| d.bg(color::muted())).hover(|s| s.bg(color::accent()))
-                    .child(div().w(px(3.)).h(px(26.)).rounded_full().bg(ink(&d.color)))
+                    .child(div().w(px(3.)).h(px(26.)).rounded_full().bg(accent))
                     .child(div().min_w_0().flex_1().flex().flex_col()
-                        .child(div().flex().items_center().gap(px(6.)).child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(color::foreground()).child(d.title.clone()))
+                        .child(div().flex().items_center().gap(px(6.)).child(div().min_w_0().text_size(px(13.)).font_weight(FontWeight::MEDIUM).text_color(color::foreground()).overflow_hidden().whitespace_nowrap().text_ellipsis().child(d.title.clone()))
                             .when(is_now, |d| d.child(design::Badge::destructive("Now"))))
                         .child(div().text_size(px(11.5)).text_color(color::muted_foreground()).child(d.sub.clone())))
                     .when(on, |d| d.child(crate::ui::icon("check", 15., color::foreground())))
@@ -736,11 +787,20 @@ impl SchedulePage {
             .child(Button::outline("pick-cancel").label("Cancel").on_click(close));
         Some(design::scrim().id("pick-scrim").occlude()
             .on_key_down(cx.listener(|p, ev: &KeyDownEvent, _, cx| if ev.keystroke.key == "escape" { p.picking = None; cx.stop_propagation(); cx.notify(); }))
-            .child(design::Dialog::new("pick").w(px(460.)).title("Link to the schedule").description("Which lecture, assignment or exam was this note for?")
+            .child(design::Dialog::new("pick").w(px(460.)).title("Link to the schedule").description("Which lecture, assignment, exam or calendar event was this note for?")
                 .closable(cx.listener(|p, _, _, cx| { p.picking = None; cx.notify(); }))
                 .child(div().flex().flex_col().gap(px(8.)).child(self.field("pick-find", "Search", &self.find, window, cx)).child(list))
                 .footer(footer))
             .into_any_element())
+    }
+
+    /// What `link` points at, with its colour: lectures and items from the schedule, calendar events
+    /// from EventKit. None once it is gone.
+    pub fn describe(&self, link: &Link) -> Option<(model::Described, Hsla)> {
+        match link {
+            Link::Event { id, start } => self.ext_describe(id, *start),
+            _ => self.data.describe(link).map(|d| { let a = ink(&d.color); (d, a) }),
+        }
     }
 
     /// The link a note has, from `links`.
@@ -752,7 +812,9 @@ impl SchedulePage {
 impl Render for SchedulePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (today, minute, _) = now();
-        let form = self.form(window, cx);
+        // Google, iCloud …: read when the days shown move, or once a minute.
+        self.ext_refresh(false);
+        let form = self.form(window, cx).or_else(|| self.ext_form_view(window, cx));
         let details = if form.is_none() { self.details(window, cx) } else { None };
         let wide = f32::from(window.viewport_size().width) >= PANEL_MIN_WINDOW;
         let heads = self.day_heads(today, cx);

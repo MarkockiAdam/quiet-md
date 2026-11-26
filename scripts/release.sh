@@ -60,6 +60,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSDocumentsFolderUsageDescription</key><string>Quiet.md 将笔记保存在文稿中的 Quiet.md 文件夹。</string>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Moss shows your Google and iCloud events in your schedule, and saves your changes back to them.</string>
+<key>NSCalendarsUsageDescription</key><string>Moss shows your Google and iCloud events in your schedule, and saves your changes back to them.</string>
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Markdown</string>
     <key>CFBundleTypeRole</key><string>Editor</string>
@@ -81,7 +83,7 @@ if [ "$SIGNING_IDENTITY" = - ]; then
   codesign --force --sign - "$app"
 else
   codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$app/Contents/MacOS/quiet"
-  codesign --force --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$app"
+  codesign --force --options runtime --timestamp --entitlements packaging/macos/app.entitlements --sign "$SIGNING_IDENTITY" "$app"
 fi
 codesign --verify --deep --strict --verbose=2 "$app"
 suffix=

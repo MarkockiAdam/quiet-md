@@ -51,6 +51,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSDocumentsFolderUsageDescription</key><string>Moss 把文档库放在「文稿」里的文件夹。</string>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>Moss shows your Google and iCloud events in your schedule, and saves your changes back to them.</string>
+  <key>NSCalendarsUsageDescription</key><string>Moss shows your Google and iCloud events in your schedule, and saves your changes back to them.</string>
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Markdown</string>
     <key>CFBundleTypeRole</key><string>Editor</string>
@@ -65,9 +67,16 @@ cat > "$app/Contents/Info.plist" <<PLIST
   </dict></array>
 </dict></plist>
 PLIST
-codesign --force --sign - "$app" >/dev/null 2>&1 || true
+# Ad-hoc, but known by its bundle id rather than by this build's hash: macOS keeps a privacy grant
+# (Moss's calendar access) for the requirement it was given, so a rebuild keeps the grant.
+codesign --force --sign - -r='designated => identifier "local.quietmd.preview"' "$app" >/dev/null 2>&1 || true
 # The Dock and Finder cache a bundle's icon by path: tell them it changed.
 touch "$app"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app" 2>/dev/null || true
-(QUIET_MD_HOME="$QUIET_MD_HOME" nohup "$bin" >/tmp/quiet-md-preview.log 2>&1 &)
+# Opened through Launch Services (in the background, -g), not as a child of this shell: macOS asks
+# for calendar access (Moss's 日历同步) only on behalf of an app that was opened as itself; started from
+# a terminal, the terminal would be the one asking and the request is turned down unseen. The bundle's
+# launcher sets QUIET_MD_HOME itself.
+: > /tmp/quiet-md-preview.log
+open -g -n --stdout /tmp/quiet-md-preview.log --stderr /tmp/quiet-md-preview.log "$app"
 sleep 2; pgrep -fl "^$bin"

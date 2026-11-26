@@ -16,6 +16,8 @@ pub struct Schedule {
     pub classes: Vec<Class>,
     /// Assignments, exams and one-off events, each on one day.
     pub items: Vec<Item>,
+    /// Calendars of this Mac (Google, iCloud …) left out of the schedule, by EventKit id.
+    pub hidden_calendars: Vec<String>,
 }
 
 /// One weekly session of a course: "Calculus, Lecture, Mon 9:00–10:30, Room B12".
@@ -189,12 +191,25 @@ pub fn until(from: (Day, Minute), to: (Day, Minute)) -> String {
 
 /// What a note is linked to (`Meta::event`): one lecture of a class, or one item.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Link { Class { id: String, day: Day }, Item { id: String } }
+pub enum Link {
+    Class { id: String, day: Day },
+    Item { id: String },
+    /// One occurrence of an event in a calendar of this Mac: its EventKit id and start (unix seconds).
+    Event { id: String, start: i64 },
+}
 
 impl Link {
-    pub fn key(&self) -> String { match self { Link::Class { id, day } => format!("class:{id}:{day}"), Link::Item { id } => format!("item:{id}") } }
+    pub fn key(&self) -> String {
+        match self { Link::Class { id, day } => format!("class:{id}:{day}"), Link::Item { id } => format!("item:{id}"), Link::Event { id, start } => format!("event:{start}:{id}") }
+    }
     pub fn parse(s: &str) -> Option<Link> {
         if let Some(r) = s.strip_prefix("item:") { return (!r.is_empty()).then(|| Link::Item { id: r.into() }) }
+        // An EventKit id can hold colons: the start comes first.
+        if let Some(r) = s.strip_prefix("event:") {
+            let (start, id) = r.split_once(':')?;
+            let start = start.parse().ok()?;
+            return (!id.is_empty()).then(|| Link::Event { id: id.into(), start });
+        }
         let r = s.strip_prefix("class:")?;
         let (id, day) = r.rsplit_once(':')?;
         Some(Link::Class { id: id.into(), day: day.parse().ok()? })
@@ -265,6 +280,8 @@ impl Schedule {
                 title: i.title.clone(), sub: [i.kind.label(), &day_label(i.day)].join(" · "),
                 color: self.color_of(&i.course).unwrap_or("gray").into(), day: i.day, start: i.time,
             }),
+            // The page knows those (`SchedulePage::describe`), from EventKit.
+            Link::Event { .. } => None,
         }
     }
 
@@ -353,7 +370,7 @@ mod tests {
     #[test]
     fn now_and_next_follow_the_week() {
         let today = crate::time::days_from_civil(2026, 11, 26); // Thursday = 3
-        let s = Schedule { classes: vec![class("Calculus", 3, "9", "10:30"), class("Physics", 3, "14", "16"), class("History", 0, "10", "11")], items: vec![] };
+        let s = Schedule { classes: vec![class("Calculus", 3, "9", "10:30"), class("Physics", 3, "14", "16"), class("History", 0, "10", "11")], items: vec![], ..Default::default() };
         let at = |m: &str| s.now_next(today, parse_time(m).unwrap());
         let r = at("9:15");
         assert_eq!(r.now.map(|c| c.course.as_str()), Some("Calculus"));
@@ -365,7 +382,7 @@ mod tests {
         let r = at("17:00");
         assert_eq!(r.next.map(|(d, c)| (d, c.course.as_str())), Some((today + 4, "History")));
         // Next week's Thursday when only Thursday classes exist and they are over.
-        let s = Schedule { classes: vec![class("Calculus", 3, "9", "10")], items: vec![] };
+        let s = Schedule { classes: vec![class("Calculus", 3, "9", "10")], items: vec![], ..Default::default() };
         assert_eq!(s.now_next(today, 700).next.map(|(d, _)| d), Some(today + 7));
         assert_eq!(Schedule::default().now_next(today, 0), NowNext { now: None, next: None });
     }
@@ -374,7 +391,7 @@ mod tests {
     fn upcoming_skips_done_and_old() {
         let today = 20_000;
         let item = |t: &str, day: Day, done: bool| Item { id: new_id(), title: t.into(), day, done, ..Default::default() };
-        let s = Schedule { classes: vec![], items: vec![item("old", today - 30, false), item("late", today - 2, false), item("done", today + 1, true), item("essay", today + 3, false), item("quiz", today, false)] };
+        let s = Schedule { classes: vec![], items: vec![item("old", today - 30, false), item("late", today - 2, false), item("done", today + 1, true), item("essay", today + 3, false), item("quiz", today, false)], ..Default::default() };
         let v: Vec<&str> = s.upcoming(today, 14).iter().map(|i| i.title.as_str()).collect();
         assert_eq!(v, ["late", "quiz", "essay"]);
     }
@@ -398,18 +415,21 @@ mod tests {
         let today = crate::time::days_from_civil(2026, 11, 26);
         let c = class("Calculus", 3, "9", "10:30");
         let item = Item { id: "e1".into(), title: "Essay".into(), course: "Calculus".into(), day: today + 2, ..Default::default() };
-        let s = Schedule { classes: vec![Class { kind: "Lecture".into(), color: "blue".into(), ..c.clone() }], items: vec![item] };
+        let s = Schedule { classes: vec![Class { kind: "Lecture".into(), color: "blue".into(), ..c.clone() }], items: vec![item], ..Default::default() };
         let l = Link::Class { id: c.id.clone(), day: today };
         assert_eq!(Link::parse(&l.key()), Some(l.clone()));
         assert_eq!(Link::parse("item:e1"), Some(Link::Item { id: "e1".into() }));
         assert_eq!(Link::parse("class:x"), None);
+        let ev = Link::Event { id: "AB:CD:12".into(), start: 1_795_000_000 };
+        assert_eq!(Link::parse(&ev.key()), Some(ev));
+        assert_eq!(Link::parse("event:soon:x"), None);
         assert_eq!(Link::parse("nonsense"), None);
         let d = s.describe(&l).unwrap();
         assert_eq!((d.title.as_str(), d.sub.as_str(), d.color.as_str()), ("Calculus", "Lecture · Thu 26 Nov", "blue"));
         assert_eq!(s.describe(&Link::Item { id: "e1".into() }).unwrap().sub, "Assignment · Sat 28 Nov");
         assert_eq!(s.describe(&Link::Item { id: "gone".into() }), None);
         // The lecture going on now comes first (before one about to start), then the nearest others, then what is due.
-        let soon = Schedule { classes: vec![s.classes[0].clone(), Class { start: 600, end: 660, ..class("Physics", 3, "10", "11") }], items: vec![] };
+        let soon = Schedule { classes: vec![s.classes[0].clone(), Class { start: 600, end: 660, ..class("Physics", 3, "10", "11") }], items: vec![], ..Default::default() };
         assert_eq!(soon.link_choices(today, 9 * 60 + 58, 0).first(), Some(&l));
         let choices = s.link_choices(today, 9 * 60 + 30, 7);
         assert_eq!(choices.first(), Some(&l));
@@ -428,7 +448,7 @@ mod tests {
 
     #[test]
     fn round_trips_through_json() {
-        let s = Schedule { classes: vec![class("Calculus", 0, "9", "10")], items: vec![Item { id: "a".into(), title: "Essay".into(), kind: Kind::Exam, day: 5, time: Some(600), ..Default::default() }] };
+        let s = Schedule { classes: vec![class("Calculus", 0, "9", "10")], items: vec![Item { id: "a".into(), title: "Essay".into(), kind: Kind::Exam, day: 5, time: Some(600), ..Default::default() }], ..Default::default() };
         let back: Schedule = serde_json::from_slice(&serde_json::to_vec(&s).unwrap()).unwrap();
         assert_eq!(back, s);
         // Older or hand-written files with fields missing still read.

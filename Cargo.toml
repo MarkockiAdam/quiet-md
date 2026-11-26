@@ -82,6 +82,8 @@ wasm-bindgen-futures = "0.4"
 core-graphics = "0.24"
 core-foundation = "=0.10.0"
 objc = "0.2"
+# 日历同步 (fork): EventKit's permission prompt answers through a block (src/schedule/calendars.rs).
+block = "0.1"
 
 # editor::text::tests drives the macOS text system directly.
 [target.'cfg(target_os = "macos")'.dev-dependencies]
