@@ -28,7 +28,7 @@ pub fn wanted(existed: bool, scripted: bool) -> bool {
 
 // ---- the film
 
-mod film {
+pub(crate) mod film {
 use super::*;
 
 /// Ordered-dither frames, each the XOR of the one before, stacked in one

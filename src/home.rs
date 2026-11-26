@@ -520,7 +520,7 @@ fn weight3(mut d: Div) -> Div {
 
 /// A document's icon: its emoji, or the monochrome page glyph.
 fn entry_icon(e: &Entry) -> AnyElement {
-    if e.meta.folder.is_some() && e.note.is_none() { return icon("folder", 22., Theme::icon()).mr(px(13.)).into_any_element(); }
+    if e.meta.folder.is_some() && e.note.is_none() { return icon("folder", 22., crate::theme::folder_ink(e.meta.color.as_deref())).mr(px(13.)).into_any_element(); }
     match &e.icon {
         _ if e.meta.named_by_file() => crate::search::doc_icon_named(crate::search::file_glyph(&e.meta)).mr(px(12.)).into_any_element(),
         Some(em) => div().size(px(24.)).mr(px(12.)).flex_none().flex().items_center().justify_center().text_size(px(18.)).child(em.clone()).into_any_element(),

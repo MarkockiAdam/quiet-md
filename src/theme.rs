@@ -560,6 +560,12 @@ pub fn text_color(name: &str) -> Option<Hsla> {
     hue::of(name).map(|h| lift(c(h.0), 4.5))
 }
 
+/// The colours a folder can take (its "…" menu's 颜色 row), by palette name.
+pub const FOLDER_COLORS: [&str; 7] = ["gray", "red", "orange", "yellow", "green", "blue", "purple"];
+
+/// A folder icon's ink: its colour (`Meta::color`) when it has one, else the icon colour.
+pub fn folder_ink(color: Option<&str>) -> Hsla { color.and_then(text_color).unwrap_or_else(Theme::icon) }
+
 /// Text highlight: the marker colours at 35% (yellow #FFF100 → #FFFAA6
 /// measured), 65% for the strong row.
 pub fn bg_color(name: &str) -> Option<Hsla> {

@@ -303,6 +303,8 @@ pub enum View {
     Folder,
     Trash,
     Settings,
+    /// 课表 (fork): the week's classes and what is due (`schedule`).
+    Schedule,
 }
 
 /// A confirmation dialog and the pages it is about.
@@ -354,6 +356,8 @@ pub struct Rename {
 }
 
 pub struct Workspace {
+    /// 课表 (fork): its page, kept for the window's life.
+    pub schedule: Entity<crate::schedule::SchedulePage>,
     pub quick_note: bool,
     pub shortcut_recording: Option<String>,
     pub shortcut_strokes: Vec<String>,
@@ -569,7 +573,11 @@ impl Workspace {
             f.placeholder_color = Theme::text_disabled();
             f
         });
+        crate::wallpaper::tick(window, cx);
+        // 课表: its own entity; the sidebar's card follows it.
+        let schedule = cx.new(crate::schedule::SchedulePage::new);
         let subs = vec![
+            cx.observe(&schedule, |_, _, cx| cx.notify()),
             cx.subscribe(&settings_filter, |_, _, ev: &TextFieldEvent, cx| if matches!(ev, TextFieldEvent::Changed) { cx.notify(); }),
             cx.observe_window_bounds(window, |this, window, cx| crate::quick_note::remember(window, this.quick_note, cx)),
             // The system switched between light and dark (or the app's own look changed).
@@ -577,6 +585,7 @@ impl Workspace {
             cx.observe_window_activation(window, |this, window, cx| {
                 if window.is_window_active() {
                     if let Some(id) = &this.current { crate::quick_note::used(id, cx); }
+                    this.schedule.update(cx, |s, cx| s.reload(cx));
                     // Several windows share one top-level folder in front: the one coming forward
                     // puts its own back (its pasted images, its look).
                     if let Some(id) = this.current.clone().or_else(|| this.folder_current.clone()) && this.store.set_active(&id) { cx.defer(crate::settings::top_switched); }
@@ -776,6 +785,7 @@ impl Workspace {
             start_later: start_later && document.is_none() && !quick,
             load_cover: false,
             _subs: subs,
+            schedule,
         };
         ws.sort();
         ws.load_home();
@@ -1802,6 +1812,18 @@ impl Workspace {
         cx.notify();
     }
 
+    /// A folder's colour (`None`: back to the plain icon).
+    pub(crate) fn set_folder_color(&mut self, id: &str, color: Option<&'static str>, cx: &mut Context<Self>) {
+        let color = color.map(str::to_string);
+        if self.store.update_meta(id, |m| m.color = color.clone()).is_ok()
+            && let Some(e) = self.entries.edit().iter_mut().find(|e| e.id == id)
+        {
+            e.meta.color = color;
+        }
+        self.row_menu = None;
+        cx.notify();
+    }
+
     pub(crate) fn set_refs_hidden(&mut self, hidden: bool, cx: &mut Context<Self>) {
         let Some(id) = self.current.clone() else { return };
         if self.store.update_meta(&id, |m| m.refs_hidden = hidden).is_ok()
@@ -2146,6 +2168,10 @@ impl Render for Workspace {
             View::Folder => self.render_folder(window, cx),
             View::Trash => self.render_trash(cx),
             View::Settings => self.render_settings(cx),
+            View::Schedule => div().flex_1().min_w_0().h_full().flex().flex_col()
+                .child(crate::trash::page_header(self, crate::settings::tr("课表", "Schedule"), 26., cx))
+                .child(div().flex_1().min_h_0().child(self.schedule.clone()))
+                .into_any_element(),
         };
         let move_dlg = self.render_move_dialog(cx);
         let export_md = self.render_export_md(cx);
@@ -2196,6 +2222,8 @@ impl Render for Workspace {
             .bg(Theme::window())
             .font_family(theme::ui_family())
             .text_color(Theme::text())
+            // 壁纸: the meadow under everything; the page covers it, the sidebar sits on it.
+            .children(crate::wallpaper::layer(window))
             // Window keys act on the window they were pressed in, not on
             // whichever window macOS considers active.
             .on_mouse_move(cx.listener(|w, ev: &MouseMoveEvent, window, cx| w.track_sidebar_press(ev, window, cx)))

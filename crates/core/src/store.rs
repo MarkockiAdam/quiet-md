@@ -66,6 +66,9 @@ pub struct Meta {
     /// 隐藏引用列表 (the "…" menu's 显示引用列表 switch off).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub refs_hidden: bool,
+    /// A folder's colour, by palette name (`gray`, `red` … `purple`; `theme::text_color`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     /// A Markdown file, edited as Markdown.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub markdown: bool,
@@ -141,7 +144,7 @@ impl Default for Meta {
             folder: None, top_order: None, created: 0, modified: 0, pinned: false, opened: 0,
             width: PageWidth::default(), catalogue_closed: true,
             parent: None, order: 0, starred: 0, reading: false,
-            info: InfoRow::default(), refs_hidden: false,
+            info: InfoRow::default(), refs_hidden: false, color: None,
             markdown: false, path: None, name: None, rel: String::new(), kind: DocKind::Doc,
         }
     }
@@ -581,6 +584,8 @@ struct Attached {
     info: InfoRow,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     refs_hidden: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
 }
 
 type DiskIndex = BTreeMap<String, Attached>;
@@ -588,11 +593,11 @@ type DiskIndex = BTreeMap<String, Attached>;
 impl Attached {
     fn of(id: &str, m: &Meta) -> Self {
         Attached { id: id.to_string(), created: m.created, modified: m.modified, pinned: m.pinned, starred: m.starred, order: m.order, top_order: m.top_order,
-            width: m.width, catalogue_closed: m.catalogue_closed, reading: m.reading, info: m.info, refs_hidden: m.refs_hidden }
+            width: m.width, catalogue_closed: m.catalogue_closed, reading: m.reading, info: m.info, refs_hidden: m.refs_hidden, color: m.color.clone() }
     }
     fn meta(&self) -> Meta {
         Meta { created: self.created, modified: self.modified, pinned: self.pinned, starred: self.starred, order: self.order, top_order: self.top_order,
-            width: self.width, catalogue_closed: self.catalogue_closed, reading: self.reading, info: self.info, refs_hidden: self.refs_hidden, ..Default::default() }
+            width: self.width, catalogue_closed: self.catalogue_closed, reading: self.reading, info: self.info, refs_hidden: self.refs_hidden, color: self.color.clone(), ..Default::default() }
     }
 }
 
@@ -2524,7 +2529,7 @@ impl Store {
         keys.extend(found.pending.iter().cloned());
         // A folder with nothing listed in it shows only when the user made it here (or
         // pinned, starred or renamed it): a found one has the id its path gives.
-        let users = |k: &str, a: &Attached| !self.v5 || a.id != meta::path_id(k) || a.pinned || a.starred > 0;
+        let users = |k: &str, a: &Attached| !self.v5 || a.id != meta::path_id(k) || a.pinned || a.starred > 0 || a.color.is_some();
         for d in &found.empty {
             let k = format!("{d}/");
             if !disk.get(&k).is_some_and(|a| users(&k, a)) { continue }

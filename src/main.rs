@@ -46,6 +46,8 @@ mod modes;
 mod typewriter;
 mod import_sources;
 mod onboarding;
+mod wallpaper;
+mod schedule;
 #[cfg(target_os = "macos")]
 mod native_header;
 #[cfg(not(target_os = "macos"))]

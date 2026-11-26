@@ -128,6 +128,9 @@ pub struct Preferences {
     /// 外观 › 窗口背景: paint the window opaque instead of letting the desktop
     /// show through the sidebar material.
     pub opaque_window: bool,
+    /// 外观 › 壁纸 (fork): "" the meadow playing, "still" one frame of it, "off" none (`wallpaper::MODES`).
+    #[serde(default)]
+    pub wallpaper: String,
     /// 外观 › 文档大纲 off: no heading outline (nor its button) beside the page.
     #[serde(default)]
     pub hide_outline: bool,
@@ -206,7 +209,7 @@ fn system_lang() -> Lang {
 impl Default for Preferences {
     fn default() -> Self {
         let lang = system_lang();
-        Preferences { theme: String::new(), feishu: true, english: lang != Lang::Zh, language: lang.code().into(), remote_images: true, quick_hotkey: true, auto_update: true, appearance: String::new(), seen_version: String::new(), motion: String::new(), new_default: String::new(), last_new: String::new(), search_engine: String::new(), start_folder: false, browser: String::new(), opaque_window: false, hide_outline: false, ui_font: String::new(), ui_family: String::new(), doc_family: String::new(), doc_size: String::new(), migrate_later: 0, find_regex: false, backspace_to_title: true, cjk_spacing: false, font_favorites: vec![], recent_doc_fonts: vec![], recent_ui_fonts: vec![], quick_note_folder: String::new(), typewriter: false }
+        Preferences { theme: String::new(), feishu: true, english: lang != Lang::Zh, language: lang.code().into(), remote_images: true, quick_hotkey: true, auto_update: true, appearance: String::new(), seen_version: String::new(), motion: String::new(), new_default: String::new(), last_new: String::new(), search_engine: String::new(), start_folder: false, browser: String::new(), opaque_window: false, wallpaper: String::new(), hide_outline: false, ui_font: String::new(), ui_family: String::new(), doc_family: String::new(), doc_size: String::new(), migrate_later: 0, find_regex: false, backspace_to_title: true, cjk_spacing: false, font_favorites: vec![], recent_doc_fonts: vec![], recent_ui_fonts: vec![], quick_note_folder: String::new(), typewriter: false }
     }
 }
 
@@ -1637,6 +1640,12 @@ impl Workspace {
                     row(tr("动画", "Animation"), Some(tr("克制：切换即时，只有拖拽带动画。丰富：展开收起、选中和悬停也带动画。", "Low: switching is instant, only dragging animates. High: folding, selection and hover animate too.").into()),
                         segmented("motion", &[tr("克制", "Low"), tr("丰富", "High")], usize::from(prefs().motion == "high"),
                             |w, i, cx| w.set_pref(|p| p.motion = ["", "high"][i].into(), cx), cx)).into_any_element(),
+                    // 壁纸 (fork): the meadow behind the sidebar (wallpaper.rs)
+                    row(tr("壁纸", "Wallpaper"), Some(tr("侧栏后面的像素草地。播放：窗口在前台时轻轻摆动。", "The pixel meadow behind the sidebar. Playing: it sways gently while the window is in front.").into()), {
+                        let at = crate::wallpaper::MODES.iter().position(|m| *m == prefs().wallpaper).unwrap_or(0);
+                        segmented("wallpaper", &[tr("播放", "Playing"), tr("静止", "Still"), tr("关闭", "Off")], at,
+                            |w, i, cx| w.set_pref(|p| p.wallpaper = crate::wallpaper::MODES[i].into(), cx), cx)
+                    }).into_any_element(),
                     // 窗口背景: the sidebar sits on the desktop material by
                     // default; a busy wallpaper behind it can be distracting.
                     row(tr("窗口背景", "Window background"), Some(tr("默认让侧栏透出桌面的毛玻璃。开启后整个窗口不透明，背景里动的东西不会透进来。", "By default the sidebar shows the desktop through a frosted surface. Turn this on for an opaque window.").into()),

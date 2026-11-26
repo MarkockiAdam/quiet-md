@@ -198,7 +198,18 @@ impl Workspace {
             .flex()
             .flex_col()
             .when(self.batch.is_none(), |d| {
-                d.child(footer_slot(
+                // 课表 (fork): what is on now and next, and what is due; a click opens the week.
+                let card = self.schedule.read(cx).card();
+                let on = self.view == View::Schedule;
+                d.children(card.map(|c| div().px(px(SB_X)).pt(px(6.)).child(div().id("sb-schedule-card").p(px(10.)).rounded(px(ROW_R + 2.)).cursor_pointer()
+                    .bg(crate::design::color::popover().opacity(0.72)).hover(|s| s.bg(crate::design::color::popover()))
+                    .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Schedule, cx))).child(c))))
+                .child(div().pt(px(6.)).px(px(SB_X)).child(
+                    footer_row("ft-schedule", "ft-date", crate::settings::tr("课表", "Schedule"))
+                        .when(on, |d| d.bg(Theme::sidebar_selected()))
+                        .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Schedule, cx))),
+                ))
+                .child(footer_slot(
                     footer_row("ft-settings", "settings-gear", crate::settings::tr("设置", "Settings"))
                         .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Settings, cx))),
                 ))
@@ -680,7 +691,7 @@ impl Workspace {
                     _ if folder => {
                         let s = if key == "doc" { self.folder_drag.pop(&e.id) } else { 1. };
                         d.child(div().absolute().inset_0().flex().items_center().justify_center().opacity(1. - chevron)
-                            .child(icon(if drop_target { "folder-input" } else { "folder" }, ROW_ICON, Theme::icon())
+                            .child(icon(if drop_target { "folder-input" } else { "folder" }, ROW_ICON, theme::folder_ink(e.meta.color.as_deref()))
                                 .with_transformation(Transformation::scale(size(s, s)))))
                         .when(chevron > 0.005, |d| d.child(div().absolute().inset_0().flex().items_center().justify_center().opacity(chevron)
                             .child(icon("disclosure", ROW_ICON, Theme::icon())

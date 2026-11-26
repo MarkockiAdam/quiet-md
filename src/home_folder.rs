@@ -370,7 +370,7 @@ impl Workspace {
                 .flex().items_center().gap(px(4.)).overflow_hidden()
                 .text_size(px(11.)).line_height(px(16.)).font_weight(FontWeight::SEMIBOLD).text_color(Theme::text())
                 .when_some(k.icon.clone(), |d, em| d.child(div().flex_none().child(em)))
-                .when(k.meta.folder.is_some(), |d| d.child(icon("folder", 12., Theme::icon())))
+                .when(k.meta.folder.is_some(), |d| d.child(icon("folder", 12., crate::theme::folder_ink(k.meta.color.as_deref()))))
                 .child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(display_title(&k.title))))
         });
         let front_glass = { let pose = pose.clone(); canvas(|_, _, _| {}, move |b, _, window, _| glass(b.origin, &pose, window)).absolute().inset_0() };

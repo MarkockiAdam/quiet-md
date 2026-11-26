@@ -335,7 +335,7 @@ impl Workspace {
         };
         let title = |t: String| div().ml(px(9.)).flex_1().min_w_0().text_size(px(theme::ui_font())).line_height(px(theme::ui_font() + 7.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(ui_text(t));
         let page_icon = |e: &Entry| match &e.icon {
-            _ if e.meta.folder.is_some() && e.note.is_none() => icon("folder", 16., Theme::icon()).into_any_element(),
+            _ if e.meta.folder.is_some() && e.note.is_none() => icon("folder", 16., crate::theme::folder_ink(e.meta.color.as_deref())).into_any_element(),
             Some(em) => div().size(px(16.)).flex_none().flex().items_center().justify_center().text_size(px(14.)).child(em.clone()).into_any_element(),
             None => icon(crate::search::file_glyph(&e.meta), 16., Theme::icon()).into_any_element(),
         };

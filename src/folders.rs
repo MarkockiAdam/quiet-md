@@ -272,6 +272,27 @@ impl Workspace {
         div().size_full().flex().flex_col().child(header).child(div().h(px(8.)).flex_none()).child(body).into_any_element()
     }
 
+    /// The folder menu's 颜色 row: no colour, then `theme::FOLDER_COLORS`; the folder's own is ringed.
+    fn folder_swatches(&self, id: &str, cx: &mut Context<Self>) -> Div {
+        use crate::design::color;
+        let now = self.entries.iter().find(|e| e.id == id).and_then(|e| e.meta.color.clone());
+        let g = crate::design::geo();
+        let dot = |key: usize, fill: Option<Hsla>, on: bool, id: String| {
+            div().id(("fr-color", key)).size(px(20.)).flex_none().rounded_full().cursor_pointer().flex().items_center().justify_center()
+                .border(px(if on { 2. } else { 0. })).border_color(color::ring())
+                .hover(|s| s.bg(color::accent()))
+                .child(match fill {
+                    Some(c) => div().size(px(12.)).rounded_full().bg(c),
+                    // no colour: an empty circle
+                    None => div().size(px(12.)).rounded_full().border(px(1.)).border_color(color::muted_foreground()),
+                })
+                .on_click(cx.listener(move |w, _, _, cx| w.set_folder_color(&id, if key == 0 { None } else { Some(crate::theme::FOLDER_COLORS[key - 1]) }, cx)))
+        };
+        div().flex_none().h(px(g.menu_row_h)).px(px(g.menu_pad + g.menu_row_px - 4.)).flex().items_center().gap(px(2.))
+            .child(dot(0, None, now.is_none(), id.to_string()))
+            .children(crate::theme::FOLDER_COLORS.iter().enumerate().map(|(i, name)| dot(i + 1, crate::theme::text_color(name), now.as_deref() == Some(*name), id.to_string())))
+    }
+
     pub(crate) fn folder_row_menu(&self, m: crate::app::RowMenu, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let (doc, folder, rename, mv, del) = (m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone(), m.id.clone());
         let row = |id: &'static str, glyph: &'static str, label: &'static str| crate::design::MenuItem::new(id).icon(glyph).label(label);
@@ -288,6 +309,10 @@ impl Workspace {
             .child(row("fr-rename", "square-pen", tr("重命名", "Rename")).on_click(cx.listener(move |w, _, window, cx| w.start_rename(&rename, window, cx))))
             .child(row("fr-move", "folder-input", tr("移动到", "Move to")).on_click(cx.listener(move |w, _, window, cx| w.open_move(vec![mv.clone()], window, cx))))
             .when_some(self.store.folder_dir(Some(&m.id)), |d, dir| d.child(row("fr-reveal", "folder", crate::local_folders::show_in_files()).on_click(cx.listener(move |w, _, _, cx| { w.row_menu = None; cx.reveal_path(&dir); cx.notify(); }))))
+            .child(crate::design::MenuSeparator::new())
+            .child(crate::design::MenuLabel::new(tr("颜色", "Color")))
+            .child(self.folder_swatches(&m.id, cx))
+            .child(crate::design::MenuSeparator::new())
             .child(row("fr-delete", "bin", tr("删除", "Delete")).on_click(cx.listener(move |w, _, _, cx| w.ask_delete(&del, cx))))))
             .with_priority(2).into_any_element()]
     }
