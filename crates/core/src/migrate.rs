@@ -241,7 +241,7 @@ pub(super) fn run(root: &Path, warnings: &mut Vec<String>) -> Result<MigrationRe
     let report = |docs, folders| MigrationReport { docs, folders, backup: internal.join(BACKUP) };
     if internal.join("format.json").fs_is_file() { finish(root, warnings); return Ok(report(0, 0)); }
     let format = reread::<FormatMarker>(&root.join("format.json")).map_or(0, |m| m.format);
-    anyhow::ensure!(format <= 3, "这个文档库由更新版本的 Quiet.md 创建，请升级后再打开");
+    anyhow::ensure!(format <= 3, "这个文档库由更新版本的 Moss 创建，请升级后再打开");
     if let Some(plan) = reread::<Plan>(&internal.join(PLAN)) {
         undo(root, &plan);
         let _ = crate::vfs::remove_file(internal.join(PLAN));

@@ -484,14 +484,14 @@ impl Workspace {
                 (
                     crate::settings::tr("把文档库改为真实文件夹？", "Move the library to real folders?").to_string(),
                     why + if cfg!(target_os = "macos") { crate::settings::tr(
-                        "改完后，在访达里看到的文件夹和文件就是侧栏里的样子，文件以标题命名。别的电脑上的旧版 Quiet.md 打不开改过的文档库，请先把它们更新到最新版本。原来的文件会在文档库的 .quiet 文件夹里保留 30 天。",
-                        "Afterwards, Finder shows the same folders and files as the sidebar, each file named by its title. Older versions of Quiet.md on other computers can't open the moved library, so update them first. The old files are kept in the library's .quiet folder for 30 days.") }
+                        "改完后，在访达里看到的文件夹和文件就是侧栏里的样子，文件以标题命名。别的电脑上的旧版 Moss 打不开改过的文档库，请先把它们更新到最新版本。原来的文件会在文档库的 .quiet 文件夹里保留 30 天。",
+                        "Afterwards, Finder shows the same folders and files as the sidebar, each file named by its title. Older versions of Moss on other computers can't open the moved library, so update them first. The old files are kept in the library's .quiet folder for 30 days.") }
                     else if cfg!(target_os = "windows") { crate::settings::tr(
-                        "改完后，在文件资源管理器里看到的文件夹和文件就是侧栏里的样子，文件以标题命名。别的电脑上的旧版 Quiet.md 打不开改过的文档库，请先把它们更新到最新版本。原来的文件会在文档库的 .quiet 文件夹里保留 30 天。",
-                        "Afterwards, File Explorer shows the same folders and files as the sidebar, each file named by its title. Older versions of Quiet.md on other computers can't open the moved library, so update them first. The old files are kept in the library's .quiet folder for 30 days.") }
+                        "改完后，在文件资源管理器里看到的文件夹和文件就是侧栏里的样子，文件以标题命名。别的电脑上的旧版 Moss 打不开改过的文档库，请先把它们更新到最新版本。原来的文件会在文档库的 .quiet 文件夹里保留 30 天。",
+                        "Afterwards, File Explorer shows the same folders and files as the sidebar, each file named by its title. Older versions of Moss on other computers can't open the moved library, so update them first. The old files are kept in the library's .quiet folder for 30 days.") }
                     else { crate::settings::tr(
-                        "改完后，在文件管理器里看到的文件夹和文件就是侧栏里的样子，文件以标题命名。别的电脑上的旧版 Quiet.md 打不开改过的文档库，请先把它们更新到最新版本。原来的文件会在文档库的 .quiet 文件夹里保留 30 天。",
-                        "Afterwards, your file manager shows the same folders and files as the sidebar, each file named by its title. Older versions of Quiet.md on other computers can't open the moved library, so update them first. The old files are kept in the library's .quiet folder for 30 days.") },
+                        "改完后，在文件管理器里看到的文件夹和文件就是侧栏里的样子，文件以标题命名。别的电脑上的旧版 Moss 打不开改过的文档库，请先把它们更新到最新版本。原来的文件会在文档库的 .quiet 文件夹里保留 30 天。",
+                        "Afterwards, your file manager shows the same folders and files as the sidebar, each file named by its title. Older versions of Moss on other computers can't open the moved library, so update them first. The old files are kept in the library's .quiet folder for 30 days.") },
                     crate::settings::tr("改用文件夹", "Move"),
                     false,
                 )
@@ -524,8 +524,8 @@ impl Workspace {
                 };
                 (
                     crate::localized_format!("添加「{}」？", "Add “{}”?", name),
-                    why + crate::settings::tr("Quiet.md 只显示其中的 Markdown 文件和 Quiet.md 文档，不进入依赖、构建产物和 .gitignore 忽略的文件夹；添加后，文件夹里会多一个隐藏的 .quiet 文件夹。",
-                        "Quiet.md shows only its Markdown files and Quiet.md documents, and skips dependencies, build output and what .gitignore leaves out. Adding it puts a hidden .quiet folder inside."),
+                    why + crate::settings::tr("Moss 只显示其中的 Markdown 文件和 Moss 文档，不进入依赖、构建产物和 .gitignore 忽略的文件夹；添加后，文件夹里会多一个隐藏的 .quiet 文件夹。",
+                        "Moss shows only its Markdown files and Moss documents, and skips dependencies, build output and what .gitignore leaves out. Adding it puts a hidden .quiet folder inside."),
                     crate::settings::tr("添加", "Add"),
                     false,
                 )

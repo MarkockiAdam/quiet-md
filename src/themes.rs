@@ -892,7 +892,7 @@ fn base_named(kind: &str, name: &str, feishu: bool) -> Option<Hsla> {
 #[cfg(test)]
 fn base_css(feishu: bool, name: &str, name_en: &str, description: &str) -> String {
     let st = Style::plain(feishu);
-    let mut out = format!("/*\n * Quiet.md document theme: {name_en}\n *\n * Each property shows its current value. Save edits to see them immediately.\n * See docs/THEMES.md for selectors and properties.\n */\n\n:root {{\n");
+    let mut out = format!("/*\n * Moss document theme: {name_en}\n *\n * Each property shows its current value. Save edits to see them immediately.\n * See docs/THEMES.md for selectors and properties.\n */\n\n:root {{\n");
     out += &format!("  --theme-name: \"{name}\";\n  --theme-name-en: \"{name_en}\";\n  --theme-author: \"quiet.md\";\n  --theme-description: \"{description}\";\n  /* Block rendering style: craft or feishu */\n  --theme-base: {};\n", if feishu { "feishu" } else { "craft" });
     for (kind, title) in [("color", "Text colors"), ("highlight", "Text highlights"), ("background", "Block backgrounds"), ("callout", "Callout fills"), ("border", "Callout borders")] {
         out += &format!("\n  /* {title} */\n");

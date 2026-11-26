@@ -1,0 +1,28 @@
+<!-- Mossy, the Moss app icon: original artwork for this fork, MIT. A round moss sprite with a sprout,
+     on the meadow horizon of the welcome screen. Drawn on the macOS icon grid: an 824 rounded square (22.37% corners)
+     centred in 1024, with a soft shadow. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+ <defs>
+  <clipPath id="sq" clipPathUnits="userSpaceOnUse"><path d="M 229 0 H 795 A 229 229 0 0 1 1024 229 V 795 A 229 229 0 0 1 795 1024 H 229 A 229 229 0 0 1 0 795 V 229 A 229 229 0 0 1 229 0 Z"/></clipPath>
+  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6aa8ee"/><stop offset="0.62" stop-color="#4793e6"/><stop offset="0.62" stop-color="#b1c78d"/><stop offset="1" stop-color="#95b676"/></linearGradient>
+  <radialGradient id="body" cx="0.38" cy="0.3" r="0.8"><stop offset="0" stop-color="#c9dca6"/><stop offset="0.55" stop-color="#95b676"/><stop offset="1" stop-color="#6f9152"/></radialGradient>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.28"/></filter>
+ </defs>
+ <g transform="translate(100 100) scale(0.8046875)">
+  <path d="M 229 0 H 795 A 229 229 0 0 1 1024 229 V 795 A 229 229 0 0 1 795 1024 H 229 A 229 229 0 0 1 0 795 V 229 A 229 229 0 0 1 229 0 Z" fill="#4793e6" filter="url(#shadow)"/>
+  <g clip-path="url(#sq)">
+   <rect width="1024" height="1024" fill="url(#sky)"/>
+   <rect x="0" y="632" width="1024" height="24" fill="#c5dabd" opacity="0.6"/>
+   <ellipse cx="512" cy="842" rx="300" ry="46" fill="#5c7f45" opacity="0.45"/>
+   <path d="M232 640 C232 430 360 300 512 300 C664 300 792 430 792 640 C792 770 670 840 512 840 C354 840 232 770 232 640Z" fill="url(#body)"/>
+   <circle cx="372" cy="470" r="22" fill="#e3ecdc" opacity="0.7"/><circle cx="640" cy="420" r="16" fill="#e3ecdc" opacity="0.6"/><circle cx="700" cy="560" r="14" fill="#e3ecdc" opacity="0.5"/>
+   <ellipse cx="430" cy="600" rx="34" ry="46" fill="#17211a"/><ellipse cx="594" cy="600" rx="34" ry="46" fill="#17211a"/>
+   <circle cx="442" cy="584" r="11" fill="#fff"/><circle cx="606" cy="584" r="11" fill="#fff"/>
+   <ellipse cx="372" cy="672" rx="38" ry="20" fill="#e98b8b" opacity="0.55"/><ellipse cx="652" cy="672" rx="38" ry="20" fill="#e98b8b" opacity="0.55"/>
+   <path d="M480 676 Q512 708 544 676" stroke="#17211a" stroke-width="16" fill="none" stroke-linecap="round"/>
+   <path d="M512 304 C512 250 520 214 540 186" stroke="#5c7f45" stroke-width="22" fill="none" stroke-linecap="round"/>
+   <path d="M538 190 C590 140 668 150 690 176 C640 222 584 224 538 190Z" fill="#7fb15a"/>
+   <path d="M514 244 C470 196 404 198 384 222 C426 262 476 268 514 244Z" fill="#95b676"/>
+  </g>
+ </g>
+</svg>

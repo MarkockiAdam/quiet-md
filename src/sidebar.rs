@@ -76,6 +76,20 @@ pub(crate) fn footer_row(id: &'static str, glyph: &'static str, label: &'static 
         .relative().children(crate::devtools::row_probe(label))
 }
 
+impl Workspace {
+    /// Home is showing (fork): the default page, or a top-level folder's page.
+    pub(crate) fn home_page(&self) -> bool {
+        self.view == View::Default || (self.view == View::Folder && self.folder_current.as_deref().and_then(crate::shared_store::top_of_row).is_some())
+    }
+}
+
+/// A place at the top of the sidebar (Home, 课表): a footer row that stays lit while it is open.
+pub(crate) fn nav_row(id: &'static str, glyph: &'static str, label: &'static str, on: bool) -> Stateful<Div> {
+    // Lit as a frosted pill, the same as the 课表 card, so it reads over the meadow as well as plain glass.
+    let lit = crate::design::color::popover().opacity(0.72);
+    footer_row(id, glyph, label).when(on, |d| d.bg(lit).hover(move |s| s.bg(lit)).font_weight(FontWeight::MEDIUM))
+}
+
 /// The footer's divider and padding around `row`.
 pub(crate) fn footer_slot(row: impl IntoElement) -> Div {
     div().pt(px(6.)).pb(px(10.)).px(px(SB_X)).child(row)
@@ -129,7 +143,14 @@ impl Workspace {
             .child(div().flex_1())
             .children(crate::settings::update_pill(cx));
 
-        let nav = div().flex_none();
+        // Home and 课表 (fork): the two places, above the tree. Home is the default folder's page,
+        // every document in it; 课表 the week (`schedule`).
+        let home_on = self.home_page();
+        let nav = div().flex_none().px(px(SB_X)).pb(px(10.)).flex().flex_col().gap(px(1.))
+            .child(nav_row("nav-home", "home", crate::settings::tr("主页", "Home"), home_on)
+                .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Default, cx))))
+            .child(nav_row("nav-schedule", "calendar", crate::settings::tr("课表", "Schedule"), self.view == View::Schedule)
+                .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Schedule, cx))));
 
         // 置顶 and 我的文档's heading stand still above the list, as 我的文档's own header (the
         // maintainer, 2026-11-25): the rows scroll under it, and so does the scrollbar's track.
@@ -200,15 +221,9 @@ impl Workspace {
             .when(self.batch.is_none(), |d| {
                 // 课表 (fork): what is on now and next, and what is due; a click opens the week.
                 let card = self.schedule.read(cx).card();
-                let on = self.view == View::Schedule;
                 d.children(card.map(|c| div().px(px(SB_X)).pt(px(6.)).child(div().id("sb-schedule-card").p(px(10.)).rounded(px(ROW_R + 2.)).cursor_pointer()
                     .bg(crate::design::color::popover().opacity(0.72)).hover(|s| s.bg(crate::design::color::popover()))
                     .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Schedule, cx))).child(c))))
-                .child(div().pt(px(6.)).px(px(SB_X)).child(
-                    footer_row("ft-schedule", "ft-date", crate::settings::tr("课表", "Schedule"))
-                        .when(on, |d| d.bg(Theme::sidebar_selected()))
-                        .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Schedule, cx))),
-                ))
                 .child(footer_slot(
                     footer_row("ft-settings", "settings-gear", crate::settings::tr("设置", "Settings"))
                         .on_click(cx.listener(|w, _, _, cx| w.show_view(View::Settings, cx))),
@@ -714,6 +729,8 @@ impl Workspace {
                 })
             })
             .child(title)
+            // 课表 (fork): a note taken for a lecture or deadline carries a small calendar mark.
+            .when(e.meta.event.is_some(), |d| d.child(div().flex_none().ml(px(4.)).mr(px(6.)).child(icon("calendar", 12., Theme::text_disabled()))))
             // A folder's "…" and "+" sit in the same columns as the header's 批量操作
             // and 新建: "…" manages the folder, "+" makes things in it (文件夹 is the
             // menu's last entry, so a separate new-folder button would be a third entry).

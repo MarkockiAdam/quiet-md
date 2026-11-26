@@ -102,7 +102,7 @@ pub fn by_family(family: &str) -> Option<&'static Entry> {
 pub fn trials_shown() -> bool {
     static T: OnceLock<bool> = OnceLock::new();
     *T.get_or_init(|| TRIAL_FONTS || std::env::var("QUIET_MD_TRIAL_FONTS").is_ok_and(|v| v == "1")
-        || std::env::current_exe().is_ok_and(|p| p.to_string_lossy().contains("Quiet.md Preview")))
+        || std::env::current_exe().is_ok_and(|p| p.to_string_lossy().contains("Moss Preview")))
 }
 
 /// The document fonts 设置 offers, in catalog order.

@@ -141,7 +141,7 @@ pub fn check(manual: bool, cx: &mut App) {
 
 /// A toast in the front window: the version and the sidebar's 更新 pill.
 fn announce(version: &str, cx: &mut App) {
-    let msg = crate::localized_format!("Quiet.md {} 已发布，点侧栏顶部的「更新」安装", "Quiet.md {} is available. Click Update at the top of the sidebar.", version);
+    let msg = crate::localized_format!("Moss {} 已发布，点侧栏顶部的「更新」安装", "Moss {} is available. Click Update at the top of the sidebar.", version);
     let window = cx.active_window().or_else(|| cx.windows().first().copied()).and_then(|w| w.downcast::<crate::app::Workspace>());
     if let Some(w) = window { let _ = w.update(cx, |ws, _, cx| ws.show_toast_kind(crate::ui::ToastKind::Info, &msg, cx)); }
 }
@@ -364,8 +364,8 @@ pub fn prompt(window: &mut Window, cx: &mut Context<crate::app::Workspace>) -> O
     let state = state(cx);
     if blocking(cx) {
         let State::Ready(m, _) = &state else { return None };
-        let body = crate::localized_format!("这个版本需要更新后才能继续使用。{} 已下载好，重启即可完成更新，打开的文档会先保存。", "This version must be updated before you continue. Version {} is downloaded; Quiet.md restarts to finish, and open documents are saved first.", m.version);
-        let dialog = Dialog::alert("forced-update-dialog").title(tr("需要更新 Quiet.md", "Quiet.md needs to update"))
+        let body = crate::localized_format!("这个版本需要更新后才能继续使用。{} 已下载好，重启即可完成更新，打开的文档会先保存。", "This version must be updated before you continue. Version {} is downloaded; Moss restarts to finish, and open documents are saved first.", m.version);
+        let dialog = Dialog::alert("forced-update-dialog").title(tr("需要更新 Moss", "Moss needs to update"))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().flex().flex_col().gap(px(8.))
                 .children(f.message().map(|t| div().child(ui::ui_para(t.to_string()))))
@@ -723,14 +723,14 @@ fn start_installer(new: &Path) -> Result<(), String> {
     let app = app_bundle().ok_or_else(|| crate::settings::tr("找不到正在运行的应用", "Could not find the running app").to_string())?;
     let parent = app.parent().ok_or("parent")?;
     if app.to_string_lossy().contains("/AppTranslocation/") {
-        return Err(crate::settings::tr("请先把 Quiet.md 移到「应用程序」文件夹，再更新", "Move Quiet.md to the Applications folder first, then update").into());
+        return Err(crate::settings::tr("请先把 Moss 移到「应用程序」文件夹，再更新", "Move Moss to the Applications folder first, then update").into());
     }
     // The folder must take the new bundle (a standard user cannot write to /Applications).
     let probe = parent.join(format!(".quiet.md-update-{}", fdl_core::vfs::process_id()));
     if let Err(e) = std::fs::create_dir(&probe) {
         // Opened straight from the mounted .dmg (/Volumes/…, a read-only volume).
         if e.kind() == std::io::ErrorKind::ReadOnlyFilesystem {
-            return Err(crate::settings::tr("Quiet.md 正在安装盘里运行。请先把它拖到「应用程序」文件夹，从那里打开后再更新", "Quiet.md is running from the installer disk image. Drag it to the Applications folder, open it from there, then update").into());
+            return Err(crate::settings::tr("Moss 正在安装盘里运行。请先把它拖到「应用程序」文件夹，从那里打开后再更新", "Moss is running from the installer disk image. Drag it to the Applications folder, open it from there, then update").into());
         }
         return Err(crate::localized_format!("没有写入 {} 的权限，请从网站下载新版本", "No permission to write to {}. Download the new version from the website instead.", parent.display()));
     }

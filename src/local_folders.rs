@@ -268,7 +268,7 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     /// What `Confirm::AddFolder` says, by its Chinese key.
-    const TEXTS: [&str; 5] = ["添加「{}」？", "这个文件夹看起来是代码项目。", "这个文件夹里有 {} 多个文件。", "Quiet.md 只显示其中的 Markdown 文件和 Quiet.md 文档，不进入依赖、构建产物和 .gitignore 忽略的文件夹；添加后，文件夹里会多一个隐藏的 .quiet 文件夹。", "添加"];
+    const TEXTS: [&str; 5] = ["添加「{}」？", "这个文件夹看起来是代码项目。", "这个文件夹里有 {} 多个文件。", "Moss 只显示其中的 Markdown 文件和 Moss 文档，不进入依赖、构建产物和 .gitignore 忽略的文件夹；添加后，文件夹里会多一个隐藏的 .quiet 文件夹。", "添加"];
 
     #[test]
     fn every_language_asks_before_adding_a_code_folder() {

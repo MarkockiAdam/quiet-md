@@ -47,20 +47,20 @@ fn menu_bar(markdown: bool) -> Vec<Menu> {
     use crate::settings::tr;
     vec![
         Menu {
-            name: "Quiet.md".into(),
+            name: "Moss".into(),
             items: vec![
-                MenuItem::action(tr("关于 Quiet.md", "About Quiet.md"), OpenAbout),
+                MenuItem::action(tr("关于 Moss", "About Moss"), OpenAbout),
                 MenuItem::action(tr("检查更新…", "Check for Updates…"), CheckForUpdates),
                 MenuItem::separator(),
                 MenuItem::action(tr("设置…", "Settings…"), OpenSettings),
                 MenuItem::separator(),
                 MenuItem::os_submenu(tr("服务", "Services"), SystemMenuType::Services),
                 MenuItem::separator(),
-                MenuItem::action(tr("隐藏 Quiet.md", "Hide Quiet.md"), HideApp),
+                MenuItem::action(tr("隐藏 Moss", "Hide Moss"), HideApp),
                 MenuItem::action(tr("隐藏其他", "Hide Others"), HideOthers),
                 MenuItem::action(tr("全部显示", "Show All"), ShowAll),
                 MenuItem::separator(),
-                MenuItem::action(tr("退出 Quiet.md", "Quit Quiet.md"), Quit),
+                MenuItem::action(tr("退出 Moss", "Quit Moss"), Quit),
             ],
             disabled: false,
         },
@@ -578,6 +578,7 @@ impl Workspace {
         let schedule = cx.new(crate::schedule::SchedulePage::new);
         let subs = vec![
             cx.observe(&schedule, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&schedule, window, |w, _, ev: &crate::schedule::ScheduleEvent, window, cx| w.on_schedule_event(ev, window, cx)),
             cx.subscribe(&settings_filter, |_, _, ev: &TextFieldEvent, cx| if matches!(ev, TextFieldEvent::Changed) { cx.notify(); }),
             cx.observe_window_bounds(window, |this, window, cx| crate::quick_note::remember(window, this.quick_note, cx)),
             // The system switched between light and dark (or the app's own look changed).
@@ -2008,6 +2009,8 @@ impl Workspace {
                             ),
 
                     )
+                    // 课表 (fork): what this note was taken for.
+                    .children(self.calendar_chip(cx))
                     .when_some(save_error, |d, error| d.child(
                         div().id("save-status-error").when(self.unsaved, |d| d.cursor_pointer().on_click(cx.listener(|w, _, _, cx| { w.confirm = Some(Confirm::SaveFailed); cx.notify(); }))).min_w_0().max_w(px(220.)).text_size(px(12.)).line_height(px(18.))
                             .text_color(theme::c(craft::R400)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(error),
@@ -2019,6 +2022,7 @@ impl Workspace {
                     .h(px(HEADER_ACTIONS_H)).flex_none()
                     .flex()
                     .items_center()
+                    .when(self.current.is_some(), |d| d.child(self.calendar_button(cx)))
                     .when(self.current.is_some(), |d| {
                         d.child(
                             // No tooltip while its dropdown is open; the menu hangs
@@ -2169,11 +2173,15 @@ impl Render for Workspace {
             View::Trash => self.render_trash(cx),
             View::Settings => self.render_settings(cx),
             View::Schedule => div().flex_1().min_w_0().h_full().flex().flex_col()
-                .child(crate::trash::page_header(self, crate::settings::tr("课表", "Schedule"), 26., cx))
+                .map(|d| { self.push_schedule_links(cx); d })
+                // 课表's own controls in the header row: the month on the left, the views and New on the right.
+                .child({ let bar = self.schedule.update(cx, |s, cx| s.header(cx)); crate::trash::page_header_with(self, bar, 26., cx).border_b_1().border_color(crate::design::color::border()) })
                 .child(div().flex_1().min_h_0().child(self.schedule.clone()))
                 .into_any_element(),
         };
         let move_dlg = self.render_move_dialog(cx);
+        // 关联到课表, opened from a note's header (fork).
+        let schedule_picker = self.schedule.update(cx, |s, cx| s.picker(window, cx));
         let export_md = self.render_export_md(cx);
         let import_apps = self.render_import_apps(cx);
         // Only the note stands out: a white plane flush with the window's top,
@@ -2370,6 +2378,7 @@ impl Render for Workspace {
             .children(pref_menu)
             .children(font_menu)
             .children(confirm)
+            .children(schedule_picker)
             .children(move_dlg)
             .children(export_md)
             .children(import_apps)

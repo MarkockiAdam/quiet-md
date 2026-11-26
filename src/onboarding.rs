@@ -103,7 +103,7 @@ pub fn paint_texture(img: std::sync::Arc<RenderImage>, b: Bounds<Pixels>, window
 /// wide as the word, so a copy set off to the right had less room than its
 /// width and wrapped its t onto a second line (#417).
 pub fn wordmark(alpha: f32) -> Div {
-    let word = |a: f32| div().text_size(px(92.)).line_height(px(110.)).font_weight(FontWeight::MEDIUM).whitespace_nowrap().text_color(hsla(0., 0., 1., a)).child("Quiet");
+    let word = |a: f32| div().text_size(px(92.)).line_height(px(110.)).font_weight(FontWeight::MEDIUM).whitespace_nowrap().text_color(hsla(0., 0., 1., a)).child("Moss");
     let mut halo = div().relative();
     for ring in 1..=18 {
         let r = ring as f32;
@@ -244,10 +244,10 @@ pub(crate) fn short_path(p: &Path) -> String {
 
 /// A picked folder as a library, used as it is: its Markdown and DocxXML
 /// files show up as documents (#282). Only the home folder and a disk's
-/// top-level folder get a Quiet.md folder inside; scanning all of either is never meant.
+/// top-level folder get a Moss folder inside; scanning all of either is never meant.
 pub(crate) fn library_in(dir: PathBuf) -> PathBuf {
     let broad = dir.parent().is_none() || dirs::home_dir().is_some_and(|h| h == dir);
-    if broad && !crate::store::Store::is_library(&dir) { dir.join("Quiet.md") } else { dir }
+    if broad && !crate::store::Store::is_library(&dir) { dir.join("Moss") } else { dir }
 }
 
 // ---- the view
@@ -575,8 +575,8 @@ impl Onboarding {
         div().size_full().flex().flex_col().items_center().justify_center().px(px(48.)).pb(px(40.))
             .child(div().flex().flex_col().items_center().gap(px(12.))
                 .child(div().size(px(64.)).rounded(px(15.)).overflow_hidden().shadow(theme::shadow_card()).child(img(crate::settings::about_icon()).size_full()))
-                .child(lifted(over, 56., 64., true, false, "Quiet.md"))
-                .child(lifted(over, 15., 23., false, true, tr("一个又快又安静的本地笔记应用。", "A fast, quiet, local notes app."))))
+                .child(lifted(over, 56., 64., true, false, "Moss"))
+                .child(lifted(over, 15., 23., false, true, tr("笔记、课表和作业，放在一个安静的地方。", "Notes, classes and deadlines in one calm place."))))
             .child(div().w_full().max_w(px(560.)).mt(px(40.)).flex().flex_col().gap(px(12.))
                 .child(lang)
                 .child(open_card)
@@ -861,9 +861,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("notes.md"), "# Notes").unwrap();
         assert_eq!(super::library_in(dir.clone()), dir);
-        assert_eq!(super::library_in("/".into()), Path::new("/Quiet.md"));
+        assert_eq!(super::library_in("/".into()), Path::new("/Moss"));
         let home = dirs::home_dir().unwrap();
-        assert_eq!(super::library_in(home.clone()), home.join("Quiet.md"));
+        assert_eq!(super::library_in(home.clone()), home.join("Moss"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

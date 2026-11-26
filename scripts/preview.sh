@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Replace the running hand-test build (dist-preview) with target/release. It
-# runs as dist-preview/Quiet.md Preview.app (so it is never mistaken for the installed app) on the
+# runs as dist-preview/Moss Preview.app (so it is never mistaken for the installed app) on the
 # saved preview library, or ~/Documents/Quiet.md. The app initializes the
 # bundled 开始指南 on first launch, just like an installed build.
 # Only this checkout's own binaries are stopped:
@@ -11,10 +11,11 @@ preview_library="${QUIET_MD_HOME:-$(cat dist-preview/library-path 2>/dev/null ||
 # An empty path would put the library in the current directory.
 [ -n "$preview_library" ] || { echo "preview.sh: no preview library" >&2; exit 1; }
 export QUIET_MD_HOME="$preview_library"
-app="$PWD/dist-preview/Quiet.md Preview.app"
+app="$PWD/dist-preview/Moss Preview.app"
 bin="$app/Contents/MacOS/quiet_md"
 pkill -f "^$bin" || true
-# The bundle's earlier name, from before it said Preview.
+# The bundle's earlier names: before it said Preview, and before the fork became Moss.
+for gone in "$PWD/dist-preview/Quiet.md Preview.app"; do pkill -f "^$gone/Contents/MacOS/quiet_md" || true; rm -rf "$gone"; done
 old="$PWD/dist-preview/quiet.md.app"
 pkill -f "^$old/Contents/MacOS/quiet_md" || true
 sleep 1
@@ -28,6 +29,8 @@ for s in 16 32 128 256 512; do
   sips -z $s $s assets/branding/app-icon-dev.png --out "$iconset/icon_${s}x${s}.png" >/dev/null
   sips -z $((s * 2)) $((s * 2)) assets/branding/app-icon-dev.png --out "$iconset/icon_${s}x${s}@2x.png" >/dev/null
 done
+# 16 px: Mossy placed by hand, where a scaled-down drawing loses the face.
+cp assets/branding/mossy-16/mossy-16.png "$iconset/icon_16x16.png"
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/app-icon.icns"
 rm -rf "$icon_tmp"
 cp target/release/quiet_md "$bin.bin"
@@ -38,8 +41,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Quiet.md Preview</string>
-  <key>CFBundleDisplayName</key><string>Quiet.md Preview</string>
+  <key>CFBundleName</key><string>Moss Preview</string>
+  <key>CFBundleDisplayName</key><string>Moss Preview</string>
   <key>CFBundleIdentifier</key><string>local.quietmd.preview</string>
   <key>CFBundleExecutable</key><string>quiet_md</string>
   <key>CFBundleIconFile</key><string>app-icon.icns</string>
@@ -47,7 +50,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
-  <key>NSDocumentsFolderUsageDescription</key><string>Quiet.md 把文档库放在「文稿」里的 Quiet.md 文件夹。</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>Moss 把文档库放在「文稿」里的文件夹。</string>
   <key>CFBundleDocumentTypes</key><array><dict>
     <key>CFBundleTypeName</key><string>Markdown</string>
     <key>CFBundleTypeRole</key><string>Editor</string>

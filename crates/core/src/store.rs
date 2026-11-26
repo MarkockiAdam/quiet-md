@@ -69,6 +69,10 @@ pub struct Meta {
     /// A folder's colour, by palette name (`gray`, `red` … `purple`; `theme::text_color`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// What in the schedule a note was taken for (fork): `class:<id>:<day>` (one lecture) or
+    /// `item:<id>` (an assignment, exam or event). See `schedule::model::Link`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<String>,
     /// A Markdown file, edited as Markdown.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub markdown: bool,
@@ -144,7 +148,7 @@ impl Default for Meta {
             folder: None, top_order: None, created: 0, modified: 0, pinned: false, opened: 0,
             width: PageWidth::default(), catalogue_closed: true,
             parent: None, order: 0, starred: 0, reading: false,
-            info: InfoRow::default(), refs_hidden: false, color: None,
+            info: InfoRow::default(), refs_hidden: false, color: None, event: None,
             markdown: false, path: None, name: None, rel: String::new(), kind: DocKind::Doc,
         }
     }
@@ -586,6 +590,8 @@ struct Attached {
     refs_hidden: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    event: Option<String>,
 }
 
 type DiskIndex = BTreeMap<String, Attached>;
@@ -593,11 +599,11 @@ type DiskIndex = BTreeMap<String, Attached>;
 impl Attached {
     fn of(id: &str, m: &Meta) -> Self {
         Attached { id: id.to_string(), created: m.created, modified: m.modified, pinned: m.pinned, starred: m.starred, order: m.order, top_order: m.top_order,
-            width: m.width, catalogue_closed: m.catalogue_closed, reading: m.reading, info: m.info, refs_hidden: m.refs_hidden, color: m.color.clone() }
+            width: m.width, catalogue_closed: m.catalogue_closed, reading: m.reading, info: m.info, refs_hidden: m.refs_hidden, color: m.color.clone(), event: m.event.clone() }
     }
     fn meta(&self) -> Meta {
         Meta { created: self.created, modified: self.modified, pinned: self.pinned, starred: self.starred, order: self.order, top_order: self.top_order,
-            width: self.width, catalogue_closed: self.catalogue_closed, reading: self.reading, info: self.info, refs_hidden: self.refs_hidden, color: self.color.clone(), ..Default::default() }
+            width: self.width, catalogue_closed: self.catalogue_closed, reading: self.reading, info: self.info, refs_hidden: self.refs_hidden, color: self.color.clone(), event: self.event.clone(), ..Default::default() }
     }
 }
 
@@ -1389,7 +1395,7 @@ impl Store {
         let flat = Self::flat_at(&root);
         if flat {
             let format = reread::<FormatMarker>(&root.join("format.json")).map_or(0, |m| m.format);
-            anyhow::ensure!(format <= FORMAT, "这个文档库由更新版本的 Quiet.md 创建，请升级后再打开");
+            anyhow::ensure!(format <= FORMAT, "这个文档库由更新版本的 Moss 创建，请升级后再打开");
             if !root.join("format.json").fs_exists() { write_atomic(&root.join("format.json"), &serde_json::to_vec_pretty(&FormatMarker { format, id: String::new() })?)?; }
         } else if hold_dataless(&marker) {
             // Still only in iCloud: opened as the layout on disk says, and
@@ -1397,7 +1403,7 @@ impl Store {
             warnings.push(not_downloaded("format.json"));
         } else {
             match crate::vfs::read(&marker).ok().and_then(|b| serde_json::from_slice::<FormatMarker>(&b).ok()) {
-                Some(m) if m.format > FORMAT => anyhow::bail!("这个文档库由更新版本的 Quiet.md 创建，请升级后再打开"),
+                Some(m) if m.format > FORMAT => anyhow::bail!("这个文档库由更新版本的 Moss 创建，请升级后再打开"),
                 // Moved to the new layout; what was left of the old one is set aside.
                 Some(m) => {
                     if migrate::legacy(&root) { migrate::finish(&root, &mut warnings); }
@@ -2040,10 +2046,10 @@ impl Store {
         crate::vfs::create_dir_all(self.internal())?;
         let lock = WriteLock(self.lock_files(self.v5)?);
         // Another copy moved it to the new layout meanwhile: nothing more is written here.
-        anyhow::ensure!(!self.flat || !self.top_dir.join(INTERNAL).join("format.json").fs_exists(), "文档库已升级到新格式，请重新打开 Quiet.md");
+        anyhow::ensure!(!self.flat || !self.top_dir.join(INTERNAL).join("format.json").fs_exists(), "文档库已升级到新格式，请重新打开 Moss");
         let marker: FormatMarker = serde_json::from_slice(&crate::vfs::read(self.internal().join("format.json"))?)?;
-        anyhow::ensure!(marker.format <= FORMAT, "这个文档库由更新版本的 Quiet.md 创建，请升级后再打开");
-        anyhow::ensure!((self.v5 || marker.format < 5) && (self.v6 || marker.format < 6), "文档库已升级到新格式，请重新打开 Quiet.md");
+        anyhow::ensure!(marker.format <= FORMAT, "这个文档库由更新版本的 Moss 创建，请升级后再打开");
+        anyhow::ensure!((self.v5 || marker.format < 5) && (self.v6 || marker.format < 6), "文档库已升级到新格式，请重新打开 Moss");
         // An unreadable index is not judged here (that is `open`'s job): the
         // version in memory is written back unchanged.
         // Memory as the disk is already (`Synced`): nothing to take in.

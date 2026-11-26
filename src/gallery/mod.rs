@@ -40,7 +40,7 @@ fn open(cx: &mut App) {
     let bounds = Bounds::centered(None, size(px(1360.), px(900.)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
-        titlebar: Some(TitlebarOptions { title: Some("Quiet.md 组件库".into()), ..Default::default() }),
+        titlebar: Some(TitlebarOptions { title: Some("Moss 组件库".into()), ..Default::default() }),
         window_min_size: Some(size(px(720.), px(480.))),
         focus: !crate::devtools::scripted(),
         ..Default::default()

@@ -406,6 +406,8 @@ impl Workspace {
     fn sidebar_pick(&self) -> Option<String> {
         match self.view {
             crate::app::View::Doc => self.current.as_deref().map(|id| self.row_of(id)),
+            // A top-level folder's page is Home (fork): the Home row is lit, not the folder's.
+            crate::app::View::Folder if self.home_page() => None,
             crate::app::View::Folder => self.folder_current.clone(),
             _ => None,
         }

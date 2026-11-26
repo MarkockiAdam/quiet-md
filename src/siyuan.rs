@@ -85,7 +85,7 @@ fn report_page(r: &Report) -> Document {
     let mut blocks = vec![Block::text(&crate::localized_count!(r.docs, "从思源笔记导入了 {} 篇文档。", "Imported {} document from SiYuan.", "Imported {} documents from SiYuan.", r.docs))];
     if !r.degraded.is_empty() {
         blocks.push(h2(tr("换成相近格式的内容", "Content in the nearest form")));
-        blocks.push(Block::text(tr("这些内容 Quiet.md 没有对应的格式，换成了最接近的写法，文字都还在。", "Quiet.md has no form for these, so they use the nearest one; their text is all there.")));
+        blocks.push(Block::text(tr("这些内容 Moss 没有对应的格式，换成了最接近的写法，文字都还在。", "Moss has no form for these, so they use the nearest one; their text is all there.")));
         for (k, n) in &r.degraded { blocks.push(bullet(RichText::plain(crate::localized_format!("{}：{} 处", "{}: {}", degraded_name(k), n)))); }
     }
     let refs = |list: &[siyuan::Ref], out: &mut Vec<Block>| for x in list {
@@ -96,7 +96,7 @@ fn report_page(r: &Report) -> Document {
     };
     if !r.block_refs.is_empty() {
         blocks.push(h2(tr("改为链接到所在文档的块引用", "Block references now linking to their document")));
-        blocks.push(Block::text(tr("这些引用指向文档里的某一块。Quiet.md 只能链接到文档或标题，所以改为链接到块所在的文档，引用的文字不变；指向同一文档的保留为文字。", "These referenced one block in a document. Quiet.md links to documents and headings only, so they link to the block’s document and keep their text; those within the same document stay text.")));
+        blocks.push(Block::text(tr("这些引用指向文档里的某一块。Moss 只能链接到文档或标题，所以改为链接到块所在的文档，引用的文字不变；指向同一文档的保留为文字。", "These referenced one block in a document. Moss links to documents and headings only, so they link to the block’s document and keep their text; those within the same document stay text.")));
         refs(&r.block_refs, &mut blocks);
     }
     if !r.broken_refs.is_empty() {

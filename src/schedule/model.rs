@@ -56,6 +56,8 @@ pub struct Item {
     pub day: Day,
     /// When on that day (due time, exam start); None: the whole day.
     pub time: Option<Minute>,
+    /// When it ends (exams, events); None: a moment (a deadline) or the whole day.
+    pub end: Option<Minute>,
     pub done: bool,
 }
 
@@ -83,8 +85,53 @@ pub fn ymd(day: Day) -> (i64, u32, u32) {
 pub const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/// "9:05", "14:30".
+/// "9:05", "14:30": what form fields hold (24-hour, read back by `parse_time`).
 pub fn hm(m: Minute) -> String { format!("{}:{:02}", m / 60, m % 60) }
+
+/// Whether this Mac's region reads the clock in 12 hours (en-US and its neighbours).
+pub fn twelve_hour() -> bool {
+    use std::sync::OnceLock;
+    static T: OnceLock<bool> = OnceLock::new();
+    *T.get_or_init(|| sys_locale::get_locale().is_some_and(|l| ["en-US", "en-CA", "en-AU", "en-NZ", "en-PH", "en-IN"].iter().any(|p| l.starts_with(p)) || l == "en"))
+}
+
+/// A time as the region reads it: "9:05 AM" / "09:05".
+pub fn clock(m: Minute) -> String {
+    let (h, mi) = (m / 60, m % 60);
+    if twelve_hour() { format!("{}:{mi:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" }) } else { format!("{h:02}:{mi:02}") }
+}
+
+/// An hour's label in the grid's margin: "9 AM", "Noon" / "09:00".
+pub fn hour_label(h: u16) -> String {
+    if !twelve_hour() { return format!("{h:02}:00") }
+    match h { 0 | 24 => "12 AM".into(), 12 => "Noon".into(), h if h < 12 => format!("{h} AM"), h => format!("{} PM", h - 12) }
+}
+
+pub const MONTHS_LONG: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/// Side by side: for blocks (start, end) on one day, each one's column and how many columns its
+/// overlapping group takes, as a calendar lays out events that clash.
+pub fn lay_out(blocks: &[(Minute, Minute)]) -> Vec<(usize, usize)> {
+    let mut order: Vec<usize> = (0..blocks.len()).collect();
+    order.sort_by_key(|&i| (blocks[i].0, std::cmp::Reverse(blocks[i].1)));
+    let mut out = vec![(0, 1); blocks.len()];
+    let (mut group, mut cols, mut group_end): (Vec<usize>, Vec<Minute>, Minute) = (vec![], vec![], 0);
+    let close = |group: &mut Vec<usize>, cols: &mut Vec<Minute>, out: &mut Vec<(usize, usize)>| {
+        for &i in group.iter() { out[i].1 = cols.len().max(1); }
+        group.clear(); cols.clear();
+    };
+    for i in order {
+        let (s, e) = blocks[i];
+        // A block starting after everything so far has ended begins a new group.
+        if !group.is_empty() && s >= group_end { close(&mut group, &mut cols, &mut out); group_end = 0; }
+        let col = match cols.iter().position(|&end| end <= s) { Some(c) => { cols[c] = e; c } None => { cols.push(e); cols.len() - 1 } };
+        out[i].0 = col;
+        group.push(i);
+        group_end = group_end.max(e);
+    }
+    close(&mut group, &mut cols, &mut out);
+    out
+}
 
 /// "Mon 24 Nov".
 pub fn day_label(day: Day) -> String { let (_, m, d) = ymd(day); format!("{} {} {}", WEEKDAYS[weekday_of(day) as usize], d, MONTHS[m as usize - 1]) }
@@ -140,6 +187,24 @@ pub fn until(from: (Day, Minute), to: (Day, Minute)) -> String {
     }
 }
 
+/// What a note is linked to (`Meta::event`): one lecture of a class, or one item.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Link { Class { id: String, day: Day }, Item { id: String } }
+
+impl Link {
+    pub fn key(&self) -> String { match self { Link::Class { id, day } => format!("class:{id}:{day}"), Link::Item { id } => format!("item:{id}") } }
+    pub fn parse(s: &str) -> Option<Link> {
+        if let Some(r) = s.strip_prefix("item:") { return (!r.is_empty()).then(|| Link::Item { id: r.into() }) }
+        let r = s.strip_prefix("class:")?;
+        let (id, day) = r.rsplit_once(':')?;
+        Some(Link::Class { id: id.into(), day: day.parse().ok()? })
+    }
+}
+
+/// What a link points at, as people read it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Described { pub title: String, pub sub: String, pub color: String, pub day: Day, pub start: Option<Minute> }
+
 /// What `Schedule::now_next` finds.
 #[derive(Debug, PartialEq)]
 pub struct NowNext<'a> {
@@ -189,15 +254,38 @@ impl Schedule {
         out
     }
 
+    /// What `link` points at; None once that class or item is gone.
+    pub fn describe(&self, link: &Link) -> Option<Described> {
+        match link {
+            Link::Class { id, day } => self.classes.iter().find(|c| &c.id == id).map(|c| Described {
+                title: c.course.clone(), sub: [c.kind.as_str(), &day_label(*day)].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(" · "),
+                color: c.color.clone(), day: *day, start: Some(c.start),
+            }),
+            Link::Item { id } => self.items.iter().find(|i| &i.id == id).map(|i| Described {
+                title: i.title.clone(), sub: [i.kind.label(), &day_label(i.day)].join(" · "),
+                color: self.color_of(&i.course).unwrap_or("gray").into(), day: i.day, start: i.time,
+            }),
+        }
+    }
+
+    /// What a note could be linked to, around `today`: the lectures of the past and next `span` days
+    /// (soonest to now first), then the items not yet done.
+    pub fn link_choices(&self, today: Day, minute: Minute, span: i64) -> Vec<Link> {
+        let mut lectures: Vec<(i64, Link)> = vec![];
+        for d in today - span..=today + span {
+            for c in self.classes_on(weekday_of(d)) {
+                // The lecture on now comes first of all.
+                let on = d == today && c.start <= minute && minute < c.end;
+                let distance = if on { -1 } else { ((d - today) * 1440 + c.start as i64 - minute as i64).abs() };
+                lectures.push((distance, Link::Class { id: c.id.clone(), day: d }));
+            }
+        }
+        lectures.sort_by_key(|(d, _)| *d);
+        lectures.into_iter().map(|(_, l)| l).chain(self.upcoming(today, span).into_iter().map(|i| Link::Item { id: i.id.clone() })).collect()
+    }
+
     /// A course's colour (its first class's), if it has classes.
     pub fn color_of(&self, course: &str) -> Option<&str> { self.classes.iter().find(|c| c.course == course).map(|c| c.color.as_str()) }
-
-    /// The hours the week grid shows: 8–18 at least, widened to every class.
-    pub fn hours(&self) -> (u16, u16) {
-        let lo = self.classes.iter().map(|c| c.start / 60).min().unwrap_or(8).min(8);
-        let hi = self.classes.iter().map(|c| c.end.div_ceil(60)).max().unwrap_or(18).max(18);
-        (lo, hi.min(24))
-    }
 }
 
 // ---- on disk
@@ -289,6 +377,44 @@ mod tests {
         let s = Schedule { classes: vec![], items: vec![item("old", today - 30, false), item("late", today - 2, false), item("done", today + 1, true), item("essay", today + 3, false), item("quiz", today, false)] };
         let v: Vec<&str> = s.upcoming(today, 14).iter().map(|i| i.title.as_str()).collect();
         assert_eq!(v, ["late", "quiz", "essay"]);
+    }
+
+    #[test]
+    fn clashing_blocks_sit_side_by_side() {
+        // 9–10 and 9:30–11 clash; 11–12 stands alone; 13–15, 13–14 and 14–15 make two columns.
+        let b = [(540, 600), (570, 660), (660, 720), (780, 900), (780, 840), (840, 900)];
+        let l = lay_out(&b);
+        assert_eq!(l[0], (0, 2));
+        assert_eq!(l[1], (1, 2));
+        assert_eq!(l[2], (0, 1));
+        assert_eq!(l[3], (0, 2));
+        assert_eq!(l[4], (1, 2));
+        assert_eq!(l[5], (1, 2));
+        assert!(lay_out(&[]).is_empty());
+    }
+
+    #[test]
+    fn links_round_trip_and_describe() {
+        let today = crate::time::days_from_civil(2026, 11, 26);
+        let c = class("Calculus", 3, "9", "10:30");
+        let item = Item { id: "e1".into(), title: "Essay".into(), course: "Calculus".into(), day: today + 2, ..Default::default() };
+        let s = Schedule { classes: vec![Class { kind: "Lecture".into(), color: "blue".into(), ..c.clone() }], items: vec![item] };
+        let l = Link::Class { id: c.id.clone(), day: today };
+        assert_eq!(Link::parse(&l.key()), Some(l.clone()));
+        assert_eq!(Link::parse("item:e1"), Some(Link::Item { id: "e1".into() }));
+        assert_eq!(Link::parse("class:x"), None);
+        assert_eq!(Link::parse("nonsense"), None);
+        let d = s.describe(&l).unwrap();
+        assert_eq!((d.title.as_str(), d.sub.as_str(), d.color.as_str()), ("Calculus", "Lecture · Thu 26 Nov", "blue"));
+        assert_eq!(s.describe(&Link::Item { id: "e1".into() }).unwrap().sub, "Assignment · Sat 28 Nov");
+        assert_eq!(s.describe(&Link::Item { id: "gone".into() }), None);
+        // The lecture going on now comes first (before one about to start), then the nearest others, then what is due.
+        let soon = Schedule { classes: vec![s.classes[0].clone(), Class { start: 600, end: 660, ..class("Physics", 3, "10", "11") }], items: vec![] };
+        assert_eq!(soon.link_choices(today, 9 * 60 + 58, 0).first(), Some(&l));
+        let choices = s.link_choices(today, 9 * 60 + 30, 7);
+        assert_eq!(choices.first(), Some(&l));
+        assert_eq!(choices.iter().filter(|c| matches!(c, Link::Class { .. })).count(), 3); // Thu 19, 26, 3 Dec
+        assert_eq!(choices.last(), Some(&Link::Item { id: "e1".into() }));
     }
 
     #[test]
